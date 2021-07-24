@@ -1,0 +1,26 @@
+[Channel]
+Contrat = 
+ContratPatron = 
+LogContrat  = 
+Home = 
+
+[Role]
+Patron = 
+
+[Discord]
+Token =  
+GuildID = 
+
+[Form]
+URL = 
+Date = 
+User = 
+Reason = 
+Contract = 
+Amount = 
+Source = 
+Details = 
+
+[Panel]
+Login = 
+Password = 
