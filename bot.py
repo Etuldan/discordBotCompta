@@ -83,7 +83,7 @@ class Bot(discord.Client):
     async def retreive_contract(self):
         amounts = sheet.worksheet("Histo_Contrats").row_values(5, value_render_option="UNFORMATTED_VALUE")
         names = sheet.worksheet("Histo_Contrats").row_values(2, value_render_option="UNFORMATTED_VALUE")
-        impots = sheet.worksheet("Récap").cell(3, 3, value_render_option="UNFORMATTED_VALUE")
+        impots = sheet.worksheet("Récap").cell(3, 3, value_render_option="UNFORMATTED_VALUE").value
         
         for name in names:
             for contract in self.contracts:
@@ -99,7 +99,7 @@ class Bot(discord.Client):
         
         for contract in self.contracts:
             if contract.company == "Impôts":
-                contact.amount = impots
+                contract.amount = impots
             contract.paid = False
         
         bot.update_db()
@@ -122,8 +122,8 @@ class Bot(discord.Client):
             moneyBank = int(r.html.find(selBank, first=True).attrs['value'].replace(' ', ''))
             moneyDirty = int(r.html.find(selDirty, first=True).attrs['value'].replace(' ', ''))
         
-            sheet.worksheet("Journal").update_cell(3, 14, moneyChest)
-            sheet.worksheet("Journal").update_cell(11, 14, moneyBank+moneyDirty)
+            sheet.worksheet("Journal Test").update("C14", moneyChest)
+            sheet.worksheet("Journal Test").update("K14", moneyBank+moneyDirty)
     
     async def background_task(self):
         await self.client.wait_until_ready()
