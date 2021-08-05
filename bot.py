@@ -99,7 +99,7 @@ class Bot(discord.Client):
         
         for contract in self.contracts:
             if contract.company == "Impôts":
-                contract.amount = impots
+                contract.amount = round(impots)
             contract.paid = False
         
         bot.update_db()
@@ -122,8 +122,8 @@ class Bot(discord.Client):
             moneyBank = int(r.html.find(selBank, first=True).attrs['value'].replace(' ', ''))
             moneyDirty = int(r.html.find(selDirty, first=True).attrs['value'].replace(' ', ''))
         
-            sheet.worksheet("Journal Test").update("C14", moneyChest)
-            sheet.worksheet("Journal Test").update("K14", moneyBank+moneyDirty)
+            sheet.worksheet("Journal").update("C14", moneyChest)
+            sheet.worksheet("Journal").update("K14", moneyBank+moneyDirty)
     
     async def background_task(self):
         await self.client.wait_until_ready()
