@@ -4,14 +4,18 @@ import discord
 import discord_slash
 from discord_slash import SlashCommand
 from discord_slash import SlashContext
+
+import locale
+from fpdf import FPDF
+from datetime import datetime, date, timedelta
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 import io
 import asyncio
 import json
-from datetime import datetime
-from datetime import date
+
 import configparser
 
 import requests
@@ -52,7 +56,10 @@ class Bot(discord.Client):
         self.channelIdContratPatron = int(self.config['Channel']['ContratPatron'])
         self.channelIdLogContrat = int(self.config['Channel']['LogContrat'])
         self.channelIdHome = int(self.config['Channel']['Home'])
+        self.channelIdRapportFailyV = int(self.config['Channel']['RapportFailyV'])
+        self.channelIdCompta = int(self.config['Channel']['Compta'])
         
+        self.userIdBotFailyV = int(self.config['Role']['BotFailyV'])
         self.roleIdPatron = self.config['Role']['Patron']
         
         self.token = self.config['Discord']['Token']
@@ -80,6 +87,157 @@ class Bot(discord.Client):
         
         self.client.loop.create_task(self.background_task())
     
+    async def retreive_contract_discord(self):
+        amount_income = 0
+        amount_outcome = 0
+        amount_depense_deduc = 0
+        amount_depense_nondeduc = 0
+        amount_impot = 0
+        amount_remaining = 0
+        amount_entreprise = 0
+
+        taux_salaire = 2800
+
+        messages = await channelRapportFailyV.history(limit=14).flatten() # 7 days
+
+        employes = []
+        for msg in messages:
+            if(msg.author.id == self.userIdBotFailyV):
+                print(f'{msg.embeds[0].fields[0].value = }')
+                embeds = msg.embeds
+                for embed in embeds:
+                    if(embed.title == "Détails Financier"):
+                        for field in embed.fields:
+                            if(field.name == "Argent Gagné (Factures)"):
+                                amount_income = amount_income + int(field.value[3:-5])
+                            elif(field.name == "Argent Gagné (Fourrières)"):
+                                amount_income = amount_income + int(field.value[3:-5])
+                            elif(field.name == "Argent Dépensé (Radar Automatique)"):
+                                amount_outcome = amount_outcome - int(field.value[3:-5])
+                            elif(field.name == "Argent Dépensé (Salaires Total)"):
+                                amount_outcome = amount_outcome - int(field.value[3:-5])
+                    if(embed.title == "Détails Salaires"):
+                        for field in embed.fields:
+                            employes.append(field.name)
+
+        unique_employes = set(employes)
+        print(f'{len(unique_employes)  = }')
+
+        for contract in self.contracts:
+            if(contract.amount != 0 and contract.positive == False and contract.paid == True):
+                if(contract.deduc == False):
+                    amount_depense_nondeduc = amount_depense_nondeduc + contract.amount
+                elif(contract.company != "Impôts" and contract.company != "Bénéfices"):
+                    amount_depense_deduc = amount_depense_deduc + contract.amount
+            elif(contract.amount != 0 and contract.positive == True and contract.paid == True):
+                amount_entreprise = amount_entreprise + contract.amount
+
+            contract.paid = False
+            if contract.deduc == False:
+                contracts.remove(contract)
+
+        amount_depense_deduc = amount_depense_deduc + len(unique_employes) * taux_salaire
+
+        print(f'{amount_income  = }')
+        print(f'{amount_outcome = }')
+        print(f'{amount_depense_deduc = }')
+        print(f'{amount_depense_nondeduc = }')
+        print(f'{amount_entreprise = }')
+
+        taux = 0
+        if(amount_income - amount_depense_deduc >= 25000):
+            taux = 25
+            amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
+        amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
+
+        print(f'{amount_impot = }')
+        print(f'{amount_remaining = }')
+
+        for contract in contracts:
+            if(contract.company == "Impôts"):
+                contract.amount = amount_impot
+            elif(contract.company == "Bénéfices"):
+                contract.amount = amount_remaining
+
+        await self.writePDF(taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, len(unique_employes) * taux_salaire)
+
+
+    async def writePDF(self, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, amount_employe):
+        locale.setlocale(locale.LC_ALL, 'fr_FR')
+
+        pdf = FPDF(orientation='P', unit='mm', format='A4')
+        pdf.add_page()
+        pdf.rect(5.0, 5.0, 200.0,287.0)
+        pdf.image("logo.png", link='', type='', x=70.0, y=6.0, h=1920/80)
+
+        pdf.set_xy(100.0,30.0)
+        pdf.set_font('Arial', 'B', 20)
+        pdf.set_text_color(50, 50, 220)
+        pdf.cell(w=10.0, h=10.0, align='C', txt="Feuille d'Impôts", border=0)
+
+        now = datetime.now()
+        monday = now - timedelta(days = now.weekday())
+        sunday = monday + timedelta(days = 6)
+        pdf.set_xy(100.0, 40.0)
+        pdf.set_font('Arial', 'B', 14)
+        pdf.set_text_color(50, 50, 50)
+        pdf.cell(w=10.0, h=10.0, align='C', txt="Du " + monday.strftime("%d %B %Y") + " au " + sunday.strftime("%d %B %Y"), border=0)
+
+        pdf.set_xy(100.0,55.0)
+        pdf.set_font('Arial', '', 15)
+        pdf.set_text_color(50, 50, 50)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Chiffre d'affaire Net", border=0)
+        pdf.cell(w=10.0, h=10.0, align='L', txt=str(amount_income - amount_depense_deduc) + " $", border=0)
+
+        pdf.set_xy(100.0,62.0)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Taux d'imposition", border=0)
+        pdf.cell(w=10.0, h=10.0, align='L', txt=str(taux) + " %", border=0)
+        pdf.set_xy(100.0,69.0)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Impôts", border=0)
+        pdf.set_font('Arial', 'B', 15)
+        pdf.set_text_color(210.0, 50, 50)
+        pdf.cell(w=10.0, h=10.0, align='L', txt=str(amount_impot) + " $", border=0)
+
+        pdf.set_font('Arial', '', 15)
+        pdf.set_text_color(50, 50, 50)
+        pdf.set_xy(100.0,85.0)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Chiffre d'affaire Entreprises", border=0)
+        pdf.cell(w=10.0, h=10.0, align='L', txt=str(amount_entreprise) + " $", border=0)
+
+        pdf.set_xy(100.0,92.0)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Dépense déductibles", border=0)
+        pdf.cell(w=10.0, h=10.0, align='L', txt=str(amount_depense_deduc) + " $", border=0)
+
+        pdf.set_font('Arial', 'B', 15)
+        pdf.set_xy(100.0, 105.0)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Détails Recettes", border=0)
+        i = 0.0
+        pdf.set_font('Arial', '', 13)
+        for contract in self.contracts:
+            if(contract.amount != 0 and contract.positive == True and contract.paid == True):
+                pdf.set_xy(100.0, 110 + i)
+                pdf.cell(w=10.0, h=10.0, align='R', txt=contract.company, border=0)
+                pdf.cell(w=10.0, h=10.0, align='L', txt=str(contract.amount) + " $", border=0)
+                i = i + 5
+
+        pdf.set_font('Arial', 'B', 15)
+        pdf.set_xy(100.0, i+120)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Détails Dépenses déductibles", border=0)
+        pdf.set_font('Arial', '', 13)
+        for contract in self.contracts:
+            if(contract.amount != 0 and contract.positive == False and contract.paid == True and not("Autre" in contract.company) and contract.company != "Impôts" and contract.company != "Bénéfices"):
+                pdf.set_xy(100.0, 125 + i)
+                pdf.cell(w=10.0, h=10.0, align='R', txt=contract.company, border=0)
+                pdf.cell(w=10.0, h=10.0, align='L', txt=str(contract.amount) + " $", border=0)
+                i = i + 5
+
+        pdf.set_xy(100.0, 125 + i)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Salaires", border=0)
+        pdf.cell(w=10.0, h=10.0, align='L', txt=str(amount_employe) + " $", border=0)
+
+        pdf.output('Comptabilite_Bennys_-_Impots_Hebdo.pdf','F')
+        await self.channelCompta.send(file=discord.File('Comptabilite_Bennys_-_Impots_Hebdo.pdf'))
+
     async def retreive_contract(self):
         amounts = sheet.worksheet("Histo_Contrats").row_values(5, value_render_option="UNFORMATTED_VALUE")
         names = sheet.worksheet("Histo_Contrats").row_values(2, value_render_option="UNFORMATTED_VALUE")
@@ -98,10 +256,12 @@ class Bot(discord.Client):
             i = i+1
         
         for contract in self.contracts:
+            contract.paid = False
             if contract.company == "Impôts":
                 contract.amount = round(impots)
-            contract.paid = False
-        
+            elif contract.deduc == False:
+                contracts.remove(contract)
+
         bot.update_db()
         await bot.update_contract()
     
@@ -132,7 +292,7 @@ class Bot(discord.Client):
             now = datetime.now().time()
             if(datetime.now().weekday() == 0 and now.hour == 12 and now.minute == 0):
                 await bot.retreive_contract()
-            if(datetime.now().weekday() == 0 and now.hour == 0 and now.minute == 0):
+            if(datetime.now().weekday() == 0 and now.hour == 2 and now.minute == 0):
                 await bot.retreive_panel()
     
     async def on_message(self, message):
@@ -188,7 +348,9 @@ class Bot(discord.Client):
         self.channelLogContrat = self.client.get_channel(self.channelIdLogContrat)
         self.channelContrat = self.client.get_channel(self.channelIdContrat)
         self.channelContratPatron = self.client.get_channel(self.channelIdContratPatron)
-        
+        self.channelRapportFailyV = self.client.get_channel(self.channelIdRapportFailyV)
+        self.channelCompta = self.client.get_channel(self.channelIdCompta)
+
         self.rolePatron = []
         tempList  = self.roleIdPatron.split(',')
         for tempRole in tempList:
@@ -276,9 +438,9 @@ class Contrat(object):
         self.amount = amount
         self.positive = False
         self.paid = False
+        self.deduc = True
 
 bot = Bot()
-
 
 @slash.slash(
     name="ajouterContrat",
@@ -304,6 +466,9 @@ bot = Bot()
             },{
             "name": "Contrat à encaisser",
             "value": 1
+            },{
+            "name": "Dépense non déductible",
+            "value": 2
         }]
     }],
     guild_ids=guild_ids)
@@ -316,8 +481,13 @@ async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, type
     
     if authorized:
         contrat = Contrat(entreprise, montant)
+
+        if(typec == 2):
+            contrat.deduc = False
+            typec = 0
+
         contrat.positive = typec
-        contrat.paid = True
+        contrat.paid = False
         bot.contracts.append(contrat)
         bot.update_db()
         await bot.update_head()

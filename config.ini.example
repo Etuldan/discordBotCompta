@@ -3,9 +3,12 @@ Contrat =
 ContratPatron = 
 LogContrat  = 
 Home = 
+RapportFailyV = 
+Compta = 
 
 [Role]
 Patron = 
+BotFailyV = 
 
 [Discord]
 Token =  
