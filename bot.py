@@ -124,7 +124,6 @@ class Bot(discord.Client):
                             employes.append(field.name)
 
         unique_employes = set(employes)
-        print(f'{len(unique_employes)  = }')
 
         for contract in self.contracts:
             if(contract.amount != 0 and contract.positive == False and contract.paid == True):
