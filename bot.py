@@ -39,7 +39,8 @@ class Bot(discord.Client):
     channelLogContrat = 0
     contracts = []
     config = 0
-    message_head = 0
+    message_head_income = 0
+    message_head_outcome = 0
     sheet = 0
     
     def __init__(self):
@@ -83,6 +84,9 @@ class Bot(discord.Client):
                 contrat = Contrat(company, data[company]["amount"])
                 contrat.positive = data[company]["positive"]
                 contrat.paid = data[company]["paid"]
+                contrat.deduc = data[company]["deduc"]
+                contrat.reset = data[company]["reset"]
+                contrat.temp = data[company]["temp"]
                 self.contracts.append(contrat)
         
         self.client.loop.create_task(self.background_task())
@@ -133,16 +137,12 @@ class Bot(discord.Client):
                 amount_entreprise = amount_entreprise + contract.amount
 
             contract.paid = False
-            if contract.deduc == False:
+            if contract.reset == True:
+                contract.amount = 0
+            if contract.temp == True:
                 contracts.remove(contract)
 
         amount_depense_deduc = amount_depense_deduc + len(unique_employes) * taux_salaire
-
-        print(f'{amount_income  = }')
-        print(f'{amount_outcome = }')
-        print(f'{amount_depense_deduc = }')
-        print(f'{amount_depense_nondeduc = }')
-        print(f'{amount_entreprise = }')
 
         taux = 0
         if(amount_income - amount_depense_deduc >= 25000):
@@ -150,19 +150,16 @@ class Bot(discord.Client):
             amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
         amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
 
-        print(f'{amount_impot = }')
-        print(f'{amount_remaining = }')
-
         for contract in contracts:
             if(contract.company == "Impôts"):
                 contract.amount = amount_impot
             elif(contract.company == "Bénéfices"):
                 contract.amount = amount_remaining
 
-        await self.writePDF(taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, len(unique_employes) * taux_salaire)
+        await self.writePDF(taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, len(unique_employes) * taux_salaire, len(unique_employes))
 
 
-    async def writePDF(self, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, amount_employe):
+    async def writePDF(self, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, amount_employe, unique_employes):
         locale.setlocale(locale.LC_ALL, 'fr_FR')
 
         pdf = FPDF(orientation='P', unit='mm', format='A4')
@@ -176,7 +173,7 @@ class Bot(discord.Client):
         pdf.cell(w=10.0, h=10.0, align='C', txt="Feuille d'Impôts", border=0)
 
         now = datetime.now()
-        monday = now - timedelta(days = now.weekday())
+        monday = now - timedelta(days = now.weekday() + 7)
         sunday = monday + timedelta(days = 6)
         pdf.set_xy(100.0, 40.0)
         pdf.set_font('Arial', 'B', 14)
@@ -232,7 +229,7 @@ class Bot(discord.Client):
                 i = i + 5
 
         pdf.set_xy(100.0, 125 + i)
-        pdf.cell(w=10.0, h=10.0, align='R', txt="Salaires", border=0)
+        pdf.cell(w=10.0, h=10.0, align='R', txt="Salaires (" + str(unique_employes) + ")", border=0)
         pdf.cell(w=10.0, h=10.0, align='L', txt=str(amount_employe) + " $", border=0)
 
         pdf.output('Comptabilite_Bennys_-_Impots_Hebdo.pdf','F')
@@ -294,6 +291,8 @@ class Bot(discord.Client):
                 await bot.retreive_contract()
             if(datetime.now().weekday() == 0 and now.hour == 2 and now.minute == 0):
                 await bot.retreive_panel()
+            elif(datetime.now().weekday() == 0 and now.hour == 3 and now.minute == 0):
+                await bot.retreive_contract_discord()
     
     async def on_message(self, message):
         if message.author == self.client.user:
@@ -306,11 +305,15 @@ class Bot(discord.Client):
             await message.delete()
     
     async def update_head(self):           
-        embed=discord.Embed(title="Liste des Contrats")
+        embed=discord.Embed(title="Encaissement", color=COLOR_GREEN)
         for contract in bot.contracts:
-            name = "🟢 "
+            name = ""
             if(contract.positive == False):
-                name = "🔴 "
+                continue
+            if(contract.deduc == True):
+                name = name + "💰 "
+            if(contract.reset == False):
+                name = name + "🔄 "
             name = name + contract.company
             
             amount = str(contract.amount)
@@ -318,9 +321,29 @@ class Bot(discord.Client):
                 amount = amount + " ✅"
             embed.add_field(name=name, value=amount, inline=False)
         try:
-            await self.message_head.edit(embed = embed)
+            await self.message_head_income.edit(embed = embed)
         except:
-            self.message_head = await self.channelContratPatron.send(embed=embed)
+            self.message_head_income = await self.channelContratPatron.send(embed=embed)
+
+        embed=discord.Embed(title="Paiement", color=COLOR_RED)
+        for contract in bot.contracts:
+            name = ""
+            if(contract.positive == True):
+                continue
+            if(contract.deduc == True):
+                name = name + "💰 "
+            if(contract.reset == False):
+                name = name + "🔄 "
+            name = name + contract.company
+
+            amount = str(contract.amount)
+            if(contract.paid == True):
+                amount = amount + " ✅"
+            embed.add_field(name=name, value=amount, inline=False)
+        try:
+            await self.message_head_outcome.edit(embed = embed)
+        except:
+            self.message_head_outcome = await self.channelContratPatron.send(embed=embed)
     
     async def update_contract(self):
         await self.channelContrat.purge()
@@ -425,6 +448,9 @@ class Bot(discord.Client):
             data[contract.company]["amount"] = contract.amount
             data[contract.company]["positive"] = contract.positive
             data[contract.company]["paid"] = contract.paid
+            data[contract.company]["deduc"] = contract.deduc
+            data[contract.company]["reset"] = contract.reset
+            data[contract.company]["temp"] = contract.temp
         with open(DB_CONTRACT, 'w') as outfile:
             json.dump(data, outfile)
     
@@ -439,6 +465,8 @@ class Contrat(object):
         self.positive = False
         self.paid = False
         self.deduc = True
+        self.reset = False
+        self.temp = False
 
 bot = Bot()
 
@@ -461,14 +489,26 @@ bot = Bot()
         "type": 4,
         "required": True,
         "choices": [{
-            "name": "Contrat à payer",
+            "name": "Contrat récurrent à payer",
             "value": 0
             },{
-            "name": "Contrat à encaisser",
+            "name": "Contrat récurrent à encaisser",
             "value": 1
             },{
-            "name": "Dépense non déductible",
+            "name": "Contrat récurrent non déductible à payer",
             "value": 2
+            },{
+            "name": "Contrat non déductible à payer",
+            "value": 3
+            },{
+            "name": "Contrat déductible à payer",
+            "value": 4
+            },{
+            "name": "Dépense déductible",
+            "value": 5
+            },{
+            "name": "Dépense non déductible",
+            "value": 6
         }]
     }],
     guild_ids=guild_ids)
@@ -485,12 +525,26 @@ async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, type
         if(typec == 2):
             contrat.deduc = False
             typec = 0
+        elif(typec == 3):
+            contrat.deduc = False
+            contrat.reset = True
+            typec = 0
+        elif(typec == 4):
+            contrat.reset = True
+            typec = 0
+        elif(typec == 5):
+            contrat.temp = True
+            typec = 0
+        elif(typec == 6):
+            contrat.deduc = False
+            contrat.temp = True
+            typec = 0
 
         contrat.positive = typec
         contrat.paid = False
         bot.contracts.append(contrat)
         bot.update_db()
-        await bot.update_head()
+        await bot.update_contract()
         await ctx.send(content="Contrat " + contrat.company + " ajouté !",hidden=True)
     else:
         await ctx.send(content="🔴Echec de l'ajout du contrat !",hidden=True)
@@ -520,9 +574,12 @@ async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
     if authorized:
         for contract in bot.contracts:
             if(contract.company == entreprise):
+                if(contract.reset == True):
+                    contract.amount = contract.amount + montant
+                else:
                 contract.amount = montant
                 bot.update_db()
-                await bot.update_head()
+                await bot.update_contract()
                 await ctx.send(content="Contrat " + contract.company + " modifié !",hidden=True)
                 return
         await ctx.send(content="🔴Echec : Aucun contrat modifié !",hidden=True)
@@ -551,7 +608,7 @@ async def _supprimerContrat(ctx: SlashContext, entreprise: str):
             if(contract.company == entreprise):
                 bot.contracts.remove(contract)
                 bot.update_db()
-                await bot.update_head()
+                await bot.update_contract()
                 await ctx.send(content="Contrat " + contract.company + " supprimé !",hidden=True)
                 return
         await ctx.send(content="🔴Echec : Aucun contrat supprimé !",hidden=True)
