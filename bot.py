@@ -99,15 +99,14 @@ class Bot(discord.Client):
         amount_impot = 0
         amount_remaining = 0
         amount_entreprise = 0
+        employes = []
 
         taux_salaire = 2800
 
         messages = await channelRapportFailyV.history(limit=14).flatten() # 7 days
 
-        employes = []
         for msg in messages:
             if(msg.author.id == self.userIdBotFailyV):
-                print(f'{msg.embeds[0].fields[0].value = }')
                 embeds = msg.embeds
                 for embed in embeds:
                     if(embed.title == "Détails Financier"):
