@@ -330,8 +330,10 @@ class Bot(discord.Client):
                 continue
             if(contract.deduc == True):
                 name = name + "💰 "
-            if(contract.reset == False):
+            if(contract.reset == False and contract.temp == False):
                 name = name + "🔄 "
+            if(contract.temp == True):
+                name = name + "♻ "
             name = name + contract.company
 
             amount = str(contract.amount)
