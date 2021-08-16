@@ -1,16 +1,15 @@
 # bot.py
+# python3 -m pip install discord discord-py-slash-command fpdf requests_html
 
 import discord
 import discord_slash
 from discord_slash import SlashCommand
 from discord_slash import SlashContext
 
+from sys import platform
 import locale
 from fpdf import FPDF
 from datetime import datetime, date, timedelta
-
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 
 import io
 import asyncio
@@ -19,7 +18,6 @@ import json
 import configparser
 
 import requests
-import requests_html
 
 DB_CONTRACT = "data.json"
 
@@ -41,16 +39,11 @@ class Bot(discord.Client):
     config = 0
     message_head_income = 0
     message_head_outcome = 0
-    sheet = 0
     
     def __init__(self):
         global slash
         global guild_ids
-        global sheet
 
-        client = gspread.service_account(filename = 'bennys-compta-7582b5af1081.json')
-        sheet = client.open_by_key("1csE41uhT1dldHfFCEO_nrA1pTpdNvZQx7MSrU3MXzoQ")
-        
         self.config = configparser.ConfigParser()
         self.config.read('config.ini')
         self.channelIdContrat = int(self.config['Channel']['Contrat'])
@@ -103,7 +96,7 @@ class Bot(discord.Client):
 
         taux_salaire = 2800
 
-        messages = await channelRapportFailyV.history(limit=14).flatten() # 7 days
+        messages = await self.channelRapportFailyV.history(limit=14).flatten() # 7 days
 
         for msg in messages:
             if(msg.author.id == self.userIdBotFailyV):
@@ -124,7 +117,7 @@ class Bot(discord.Client):
                             employes.append(field.name)
 
         unique_employes = set(employes)
-
+ 
         for contract in self.contracts:
             if(contract.amount != 0 and contract.positive == False and contract.paid == True):
                 if(contract.deduc == False):
@@ -134,12 +127,6 @@ class Bot(discord.Client):
             elif(contract.amount != 0 and contract.positive == True and contract.paid == True):
                 amount_entreprise = amount_entreprise + contract.amount
 
-            contract.paid = False
-            if contract.reset == True:
-                contract.amount = 0
-            if contract.temp == True:
-                contracts.remove(contract)
-
         amount_depense_deduc = amount_depense_deduc + len(unique_employes) * taux_salaire
 
         taux = 0
@@ -148,17 +135,27 @@ class Bot(discord.Client):
             amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
         amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
 
-        for contract in contracts:
+        await self.writePDF(taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, len(unique_employes) * taux_salaire, len(unique_employes))
+
+        for contract in self.contracts:
             if(contract.company == "Impôts"):
                 contract.amount = amount_impot
             elif(contract.company == "Bénéfices"):
                 contract.amount = amount_remaining
+            contract.paid = False
+            if contract.reset == True:
+                contract.amount = 0
+            if contract.temp == True:
+                self.contracts.remove(contract)
 
-        await self.writePDF(taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, len(unique_employes) * taux_salaire, len(unique_employes))
-
+        bot.update_db()
+        await bot.update_contract()
 
     async def writePDF(self, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, amount_employe, unique_employes):
-        locale.setlocale(locale.LC_ALL, 'fr_FR')
+        if platform == "linux" or platform == "linux2":
+            locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
+        elif platform == "win32":
+            locale.setlocale(locale.LC_ALL, 'fr_FR')
 
         pdf = FPDF(orientation='P', unit='mm', format='A4')
         pdf.add_page()
@@ -220,7 +217,7 @@ class Bot(discord.Client):
         pdf.cell(w=10.0, h=10.0, align='R', txt="Détails Dépenses déductibles", border=0)
         pdf.set_font('Arial', '', 13)
         for contract in self.contracts:
-            if(contract.amount != 0 and contract.positive == False and contract.paid == True and not("Autre" in contract.company) and contract.company != "Impôts" and contract.company != "Bénéfices"):
+            if(contract.amount != 0 and contract.positive == False and contract.deduc == True and contract.paid == True and contract.company != "Impôts" and contract.company != "Bénéfices"):
                 pdf.set_xy(100.0, 125 + i)
                 pdf.cell(w=10.0, h=10.0, align='R', txt=contract.company, border=0)
                 pdf.cell(w=10.0, h=10.0, align='L', txt=str(contract.amount) + " $", border=0)
@@ -233,63 +230,12 @@ class Bot(discord.Client):
         pdf.output('Comptabilite_Bennys_-_Impots_Hebdo.pdf','F')
         await self.channelCompta.send(file=discord.File('Comptabilite_Bennys_-_Impots_Hebdo.pdf'))
 
-    async def retreive_contract(self):
-        amounts = sheet.worksheet("Histo_Contrats").row_values(5, value_render_option="UNFORMATTED_VALUE")
-        names = sheet.worksheet("Histo_Contrats").row_values(2, value_render_option="UNFORMATTED_VALUE")
-        impots = sheet.worksheet("Récap").cell(3, 3, value_render_option="UNFORMATTED_VALUE").value
-        
-        for name in names:
-            for contract in self.contracts:
-                if contract.company == name:
-                    contract.amount = 0
-        
-        i = 0
-        for amount in amounts:
-            for contract in self.contracts:
-                if contract.company == names[i]:
-                    contract.amount = amount + contract.amount
-            i = i+1
-        
-        for contract in self.contracts:
-            contract.paid = False
-            if contract.company == "Impôts":
-                contract.amount = round(impots)
-            elif contract.deduc == False:
-                contracts.remove(contract)
-
-        bot.update_db()
-        await bot.update_contract()
-    
-    async def retreive_panel(self):
-        urlLogin = 'http://panel.failyv.com/dashboard/index.php'
-        urlCompany = 'http://panel.failyv.com/dashboard/index.php?section=company'
-    
-        selChest = "div#inventaire_coffre table tbody"
-        selBank = "input[name='money']"
-        selDirty = "input[name='dirty_money']"
-        
-        payload = {'login': self.config['Panel']['Login'], 'password': self.config['Panel']['Password']}        
-        
-        with requests_html.HTMLSession() as s:
-            s.post(urlLogin, data=payload)
-            r = s.get(urlCompany)
-            moneyChest = int(r.html.find(selChest, first=True).text[0:-2].replace(' ', ''))
-            moneyBank = int(r.html.find(selBank, first=True).attrs['value'].replace(' ', ''))
-            moneyDirty = int(r.html.find(selDirty, first=True).attrs['value'].replace(' ', ''))
-        
-            sheet.worksheet("Journal").update("C14", moneyChest)
-            sheet.worksheet("Journal").update("K14", moneyBank+moneyDirty)
-    
     async def background_task(self):
         await self.client.wait_until_ready()
         while not self.client.is_closed():
             await asyncio.sleep(50)
             now = datetime.now().time()
-            if(datetime.now().weekday() == 0 and now.hour == 12 and now.minute == 0):
-                await bot.retreive_contract()
-            if(datetime.now().weekday() == 0 and now.hour == 2 and now.minute == 0):
-                await bot.retreive_panel()
-            elif(datetime.now().weekday() == 0 and now.hour == 3 and now.minute == 0):
+            if(datetime.now().weekday() == 0 and now.hour == 3 and now.minute == 0):
                 await bot.retreive_contract_discord()
     
     async def on_message(self, message):
@@ -313,7 +259,7 @@ class Bot(discord.Client):
             if(contract.reset == False):
                 name = name + "🔄 "
             name = name + contract.company
-            
+
             amount = str(contract.amount)
             if(contract.paid == True):
                 amount = amount + " ✅"
@@ -335,7 +281,7 @@ class Bot(discord.Client):
             if(contract.temp == True):
                 name = name + "♻ "
             name = name + contract.company
-
+            
             amount = str(contract.amount)
             if(contract.paid == True):
                 amount = amount + " ✅"
@@ -380,7 +326,7 @@ class Bot(discord.Client):
             self.rolePatron.append(self.channelHome.guild.get_role(int(tempRole)))
 
         await self.update_contract()
-
+        await self.client.wait_until_ready()
         print(str(self.client.user) + " is now ready!")
     
     async def on_raw_reaction_add(self, payload):
@@ -538,8 +484,8 @@ async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, type
         elif(typec == 6):
             contrat.deduc = False
             contrat.temp = True
-            typec = 0
-
+            typec = 0    
+            
         contrat.positive = typec
         contrat.paid = False
         bot.contracts.append(contrat)
@@ -577,7 +523,7 @@ async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
                 if(contract.reset == True):
                     contract.amount = contract.amount + montant
                 else:
-                contract.amount = montant
+                    contract.amount = montant
                 bot.update_db()
                 await bot.update_contract()
                 await ctx.send(content="Contrat " + contract.company + " modifié !",hidden=True)
