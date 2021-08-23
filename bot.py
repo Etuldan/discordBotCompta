@@ -252,27 +252,23 @@ class Bot(discord.Client):
             await message.delete()
     
     async def update_head(self):           
-        embed=discord.Embed(title="Encaissement", color=COLOR_GREEN)
+        embedEncaissement=discord.Embed(title="Encaissement", color=COLOR_GREEN)
         for contract in bot.contracts:
             name = ""
             if(contract.positive == False):
                 continue
-            if(contract.deduc == True):
-                name = name + "💰 "
-            if(contract.reset == False):
-                name = name + "🔄 "
             name = name + contract.company
 
             amount = str(contract.amount)
             if(contract.paid == True):
                 amount = amount + " ✅"
-            embed.add_field(name=name, value=amount, inline=False)
+            embedEncaissement.add_field(name=name, value=amount, inline=False)
         try:
-            await self.message_head_income.edit(embed = embed)
+            await self.message_head_income.edit(embed = embedEncaissement)
         except:
-            self.message_head_income = await self.channelContratPatron.send(embed=embed)
+            self.message_head_income = await self.channelContratPatron.send(embed=embedEncaissement)
 
-        embed=discord.Embed(title="Paiement", color=COLOR_RED)
+        embedPaiement=discord.Embed(title="Paiement", color=COLOR_RED)
         for contract in bot.contracts:
             name = ""
             if(contract.positive == True):
@@ -288,11 +284,11 @@ class Bot(discord.Client):
             amount = str(contract.amount)
             if(contract.paid == True):
                 amount = amount + " ✅"
-            embed.add_field(name=name, value=amount, inline=False)
+            embedPaiement.add_field(name=name, value=amount, inline=False)
         try:
-            await self.message_head_outcome.edit(embed = embed)
+            await self.message_head_outcome.edit(embed = embedPaiement)
         except:
-            self.message_head_outcome = await self.channelContratPatron.send(embed=embed)
+            self.message_head_outcome = await self.channelContratPatron.send(embed=embedPaiement)
     
     async def update_contract(self):
         await self.channelContrat.purge()
