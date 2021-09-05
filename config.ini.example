@@ -7,20 +7,8 @@ RapportFailyV =
 Compta = 
 
 [Role]
-Patron = 
 BotFailyV = 
 
 [Discord]
 Token =  
 GuildID = 
-
-[Form]
-URL = 
-Date = 
-User = 
-Reason = 
-Contract = 
-Amount = 
-Source = 
-Details = 
- 

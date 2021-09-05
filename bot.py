@@ -1,5 +1,5 @@
 # bot.py
-# python3 -m pip install discord discord-py-slash-command fpdf requests_html
+# python3 -m pip install discord discord-py-slash-command fpdf
 
 import discord
 import discord_slash
@@ -16,8 +16,6 @@ import asyncio
 import json
 
 import configparser
-
-import requests
 
 DB_CONTRACT = "data.json"
 
@@ -54,7 +52,6 @@ class Bot(discord.Client):
         self.channelIdCompta = int(self.config['Channel']['Compta'])
         
         self.userIdBotFailyV = int(self.config['Role']['BotFailyV'])
-        self.roleIdPatron = self.config['Role']['Patron']
         
         self.token = self.config['Discord']['Token']
         guild_ids = []
@@ -319,11 +316,6 @@ class Bot(discord.Client):
         self.channelRapportFailyV = self.client.get_channel(self.channelIdRapportFailyV)
         self.channelCompta = self.client.get_channel(self.channelIdCompta)
 
-        self.rolePatron = []
-        tempList  = self.roleIdPatron.split(',')
-        for tempRole in tempList:
-            self.rolePatron.append(self.channelHome.guild.get_role(int(tempRole)))
-
         await self.update_contract()
         await self.client.wait_until_ready()
         print(str(self.client.user) + " is now ready!")
@@ -347,34 +339,6 @@ class Bot(discord.Client):
                     if(contract.paid == False and contract.company in message.embeds[0].title and ((contract.positive == True and "Contrat" in message.embeds[0].title) or (contract.positive == False and "Contrat" not in message.embeds[0].title))):
                         contract.paid = True
                         bot.update_db()
-                        
-                        contrat = ""
-                        details = ""                        
-                        if(contract.positive == True):
-                            reason = "Contrat"
-                            source = "Coffre"
-                            contrat = message.embeds[0].title[8:]
-                        else:
-                            reason = message.embeds[0].title.split()[0]
-                            source = "Compte en banque"
-                            details = message.embeds[0].title
-                        
-                        form_data = {
-                            'entry.' + self.config['Form']['Date']    : date.today().strftime("%Y-%m-%d"),
-                            'entry.' + self.config['Form']['User']    : user.display_name, 
-                            'entry.' + self.config['Form']['Reason']  : reason,
-                            
-                            'entry.' + self.config['Form']['Contract']: contrat, 
-
-                            'entry.' + self.config['Form']['Amount']  : message.embeds[0].description.strip('$'),
-                            'entry.' + self.config['Form']['Source']  : source,
-                            'entry.' + self.config['Form']['Details'] : details,
-                            
-                            'draftResponse':[], 
-                            'pageHistory':"0,1,2"}
-                            
-                        user_agent = {'Referer':self.config['Form']['URL'] + '/viewform','User-Agent':"Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1500.52 Safari/537.36"}
-                        r = requests.post(self.config['Form']['URL'] + "/formResponse", data=form_data, headers=user_agent)
                         
                         await message.delete()
                         if(contract.positive == True):
