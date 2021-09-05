@@ -339,7 +339,7 @@ class Bot(discord.Client):
                     if(contract.paid == False and contract.company in message.embeds[0].title and ((contract.positive == True and "Contrat" in message.embeds[0].title) or (contract.positive == False and "Contrat" not in message.embeds[0].title))):
                         contract.paid = True
                         bot.update_db()
-                        
+
                         await message.delete()
                         if(contract.positive == True):
                             await self.channelLogContrat.send("🟢 Le **" + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
@@ -378,6 +378,9 @@ class Contrat(object):
         self.temp = False
 
 bot = Bot()
+
+def isAuthorized(ctx):
+    return (bot.channelContratPatron==ctx.channel)
 
 @slash.slash(
     name="ajouterContrat",
@@ -423,12 +426,8 @@ bot = Bot()
     guild_ids=guild_ids)
 async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, typec: bool):
     await ctx.defer(hidden=True)   
-    authorized = False
-    for tempRole in bot.rolePatron:
-        if tempRole in ctx.author.roles:
-           authorized = True
     
-    if authorized:
+    if isAuthorized(ctx):
         contrat = Contrat(entreprise, montant)
 
         if(typec == 2):
@@ -475,12 +474,8 @@ async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, type
     guild_ids=guild_ids)
 async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
     await ctx.defer(hidden=True)   
-    authorized = False
-    for tempRole in bot.rolePatron:
-        if tempRole in ctx.author.roles:
-           authorized = True
     
-    if authorized:
+    if isAuthorized(ctx):
         for contract in bot.contracts:
             if(contract.company == entreprise):
                 if(contract.reset == True):
@@ -507,12 +502,8 @@ async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
     guild_ids=guild_ids)
 async def _supprimerContrat(ctx: SlashContext, entreprise: str):
     await ctx.defer(hidden=True)   
-    authorized = False
-    for tempRole in bot.rolePatron:
-        if tempRole in ctx.author.roles:
-           authorized = True
     
-    if authorized:
+    if isAuthorized(ctx):
         for contract in bot.contracts:
             if(contract.company == entreprise):
                 bot.contracts.remove(contract)
@@ -531,13 +522,9 @@ async def _supprimerContrat(ctx: SlashContext, entreprise: str):
     guild_ids=guild_ids)
 async def _supprimerContrat(ctx: SlashContext):
     await ctx.defer(hidden=True)   
-    authorized = False
-    for tempRole in bot.rolePatron:
-        if tempRole in ctx.author.roles:
-           authorized = True
-    
-    if authorized:
-        await bot.retreive_contract()
+
+    if isAuthorized(ctx):
+        await bot.update_contract()
         await ctx.send(content="Contrat rechargés !",hidden=True)
     else:
         await ctx.send(content="🔴Echec du rechargement des contrats !",hidden=True)
