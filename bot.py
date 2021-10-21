@@ -89,9 +89,6 @@ class Bot(discord.Client):
         amount_impot = 0
         amount_remaining = 0
         amount_entreprise = 0
-        employes = []
-
-        taux_salaire = 2800
 
         messages = await self.channelRapportFailyV.history(limit=14).flatten() # 7 days
 
@@ -109,12 +106,7 @@ class Bot(discord.Client):
                                 amount_outcome = amount_outcome - int(field.value[3:-5])
                             elif(field.name == "Argent Dépensé (Salaires Total)"):
                                 amount_outcome = amount_outcome - int(field.value[3:-5])
-                    if(embed.title == "Détails Salaires"):
-                        for field in embed.fields:
-                            employes.append(field.name)
 
-        unique_employes = set(employes)
- 
         for contract in self.contracts:
             if(contract.amount != 0 and contract.positive == False and contract.paid == True):
                 if(contract.deduc == False):
@@ -124,18 +116,18 @@ class Bot(discord.Client):
             elif(contract.amount != 0 and contract.positive == True and contract.paid == True):
                 amount_entreprise = amount_entreprise + contract.amount
 
-        amount_depense_deduc = amount_depense_deduc + len(unique_employes) * taux_salaire
+        amount_depense_deduc = amount_depense_deduc
 
         taux = 0
-        if(amount_income - amount_depense_deduc > 100000):
-            taux = 25
-            amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
-        elif(amount_income - amount_depense_deduc > 25000):
-            taux = 23
-            amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
+        if(amount_income - amount_depense_deduc > 300000):
+            taux = 20
+        elif(amount_income - amount_depense_deduc > 75000):
+            taux = 15
+            
+        amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
         amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
 
-        await self.writePDF(taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, len(unique_employes) * taux_salaire, len(unique_employes))
+        await self.writePDF(taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc)
 
         for contract in self.contracts:
             if(contract.company == "Impôts"):
@@ -151,7 +143,7 @@ class Bot(discord.Client):
         bot.update_db()
         await bot.update_contract()
 
-    async def writePDF(self, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc, amount_employe, unique_employes):
+    async def writePDF(self, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc):
         if platform == "linux" or platform == "linux2":
             locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
         elif platform == "win32":
@@ -222,10 +214,6 @@ class Bot(discord.Client):
                 pdf.cell(w=10.0, h=10.0, align='R', txt=contract.company, border=0)
                 pdf.cell(w=10.0, h=10.0, align='L', txt=str(contract.amount) + " $", border=0)
                 i = i + 5
-
-        pdf.set_xy(100.0, 125 + i)
-        pdf.cell(w=10.0, h=10.0, align='R', txt="Salaires (" + str(unique_employes) + ")", border=0)
-        pdf.cell(w=10.0, h=10.0, align='L', txt=str(amount_employe) + " $", border=0)
 
         pdf.output('Comptabilite_Bennys_-_Impots_Hebdo.pdf','F')
         await self.channelCompta.send(file=discord.File('Comptabilite_Bennys_-_Impots_Hebdo.pdf'))
