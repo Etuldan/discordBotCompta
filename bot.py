@@ -1,15 +1,15 @@
 # bot.py
-# python3 -m pip install discord discord-py-slash-command fpdf
+# python3 -m pip install discord.py discord-py-interactions fpdf
 
 import discord
-import discord_slash
-from discord_slash import SlashCommand
-from discord_slash import SlashContext
+from discord_slash import SlashCommand, SlashContext
+from discord_slash.utils.manage_commands import create_permission
+from discord_slash.model import SlashCommandPermissionType
 
 from sys import platform
 import locale
 from fpdf import FPDF
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 
 import io
 import asyncio
@@ -27,8 +27,6 @@ COLOR_DEFAULT = 0
 
 slash = None
 
-
-guild_ids = []    
     
 class Bot(discord.Client):
     channelContrat = 0
@@ -37,10 +35,10 @@ class Bot(discord.Client):
     config = 0
     message_head_income = 0
     message_head_outcome = 0
+    guild_ids = []
     
     def __init__(self):
         global slash
-        global guild_ids
 
         self.config = configparser.ConfigParser()
         self.config.read('config.ini')
@@ -52,12 +50,13 @@ class Bot(discord.Client):
         self.channelIdCompta = int(self.config['Channel']['Compta'])
         
         self.userIdBotFailyV = int(self.config['Role']['BotFailyV'])
-        
+        self.userIdStaff = int(self.config['Role']['Staff'])
+
         self.token = self.config['Discord']['Token']
-        guild_ids = []
+        self.guild_ids = []
         tempList  = self.config['Discord']['GuildID'].split(',')
         for tempid in tempList:
-            guild_ids.append((int(tempid)))
+            self.guild_ids.append((int(tempid)))
         
         intents = discord.Intents.all()
         self.client = discord.Client(intents=intents)       
@@ -367,12 +366,15 @@ class Contrat(object):
 
 bot = Bot()
 
-def isAuthorized(ctx):
-    return (bot.channelContratPatron==ctx.channel)
-
 @slash.slash(
     name="ajouterContrat",
-    description="[PATRON] Ajoute un contrat",
+    description="Ajoute un contrat",
+    default_permission = False,
+    permissions={
+        bot.guild_ids[0]: [
+            create_permission(bot.userIdStaff, SlashCommandPermissionType.ROLE, True),
+            create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
+    },
     options = [{
         "name": "entreprise",
         "description": "Entreprise pour lequel ajouter le Contrat",
@@ -411,43 +413,46 @@ def isAuthorized(ctx):
             "value": 6
         }]
     }],
-    guild_ids=guild_ids)
+    guild_ids=bot.guild_ids)
 async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, typec: bool):
     await ctx.defer(hidden=True)   
     
-    if isAuthorized(ctx):
-        contrat = Contrat(entreprise, montant)
+    contrat = Contrat(entreprise, montant)
 
-        if(typec == 2):
-            contrat.deduc = False
-            typec = 0
-        elif(typec == 3):
-            contrat.deduc = False
-            contrat.reset = True
-            typec = 0
-        elif(typec == 4):
-            contrat.reset = True
-            typec = 0
-        elif(typec == 5):
-            contrat.temp = True
-            typec = 0
-        elif(typec == 6):
-            contrat.deduc = False
-            contrat.temp = True
-            typec = 0    
-            
-        contrat.positive = typec
-        contrat.paid = False
-        bot.contracts.append(contrat)
-        bot.update_db()
-        await bot.update_contract()
-        await ctx.send(content="Contrat " + contrat.company + " ajouté !",hidden=True)
-    else:
-        await ctx.send(content="🔴Echec de l'ajout du contrat !",hidden=True)
+    if(typec == 2):
+        contrat.deduc = False
+        typec = 0
+    elif(typec == 3):
+        contrat.deduc = False
+        contrat.reset = True
+        typec = 0
+    elif(typec == 4):
+        contrat.reset = True
+        typec = 0
+    elif(typec == 5):
+        contrat.temp = True
+        typec = 0
+    elif(typec == 6):
+        contrat.deduc = False
+        contrat.temp = True
+        typec = 0    
+        
+    contrat.positive = typec
+    contrat.paid = False
+    bot.contracts.append(contrat)
+    bot.update_db()
+    await bot.update_contract()
+    await ctx.send(content="Contrat " + contrat.company + " ajouté !",hidden=True)
 
 @slash.slash(
     name="modifierContrat",
-    description="[PATRON] Modifie un contrat existant",
+    description="Modifie un contrat existant",
+    default_permission = False,
+    permissions={
+        bot.guild_ids[0]: [
+            create_permission(bot.userIdStaff, SlashCommandPermissionType.ROLE, True),
+            create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
+    },
     options = [{
         "name": "entreprise",
         "description": "Entreprise pour lequel changer le Contrat",
@@ -459,63 +464,66 @@ async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, type
         "type": 4,
         "required": True
     }],
-    guild_ids=guild_ids)
+    guild_ids=bot.guild_ids)
 async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
     await ctx.defer(hidden=True)   
     
-    if isAuthorized(ctx):
-        for contract in bot.contracts:
-            if(contract.company == entreprise):
-                if(contract.reset == True):
-                    contract.amount = contract.amount + montant
-                else:
-                    contract.amount = montant
-                bot.update_db()
-                await bot.update_contract()
-                await ctx.send(content="Contrat " + contract.company + " modifié !",hidden=True)
-                return
-        await ctx.send(content="🔴Echec : Aucun contrat modifié !",hidden=True)
-    else:
-        await ctx.send(content="🔴Echec de la modification du contrat !",hidden=True)
+    for contract in bot.contracts:
+        if(contract.company == entreprise):
+            if(contract.reset == True):
+                contract.amount = contract.amount + montant
+            else:
+                contract.amount = montant
+            bot.update_db()
+            await bot.update_contract()
+            await ctx.send(content="Contrat " + contract.company + " modifié !",hidden=True)
+            return
+    await ctx.send(content="🔴Echec : Aucun contrat modifié !",hidden=True)
 
 @slash.slash(
     name="supprimerContrat",
-    description="[PATRON] Supprime un contrat existant",
+    description="Supprime un contrat existant",
+    default_permission = False,
+    permissions={
+        bot.guild_ids[0]: [
+            create_permission(bot.userIdStaff, SlashCommandPermissionType.ROLE, True),
+            create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
+    },
     options = [{
         "name": "entreprise",
         "description": "Entreprise pour lequel supprimer le Contrat",
         "type": 3,
         "required": True
     }],
-    guild_ids=guild_ids)
+    guild_ids=bot.guild_ids)
 async def _supprimerContrat(ctx: SlashContext, entreprise: str):
     await ctx.defer(hidden=True)   
     
-    if isAuthorized(ctx):
-        for contract in bot.contracts:
-            if(contract.company == entreprise):
-                bot.contracts.remove(contract)
-                bot.update_db()
-                await bot.update_contract()
-                await ctx.send(content="Contrat " + contract.company + " supprimé !",hidden=True)
-                return
-        await ctx.send(content="🔴Echec : Aucun contrat supprimé !",hidden=True)
-    else:
-        await ctx.send(content="🔴Echec de la suppression du contrat !",hidden=True)
+    for contract in bot.contracts:
+        if(contract.company == entreprise):
+            bot.contracts.remove(contract)
+            bot.update_db()
+            await bot.update_contract()
+            await ctx.send(content="Contrat " + contract.company + " supprimé !",hidden=True)
+            return
+    await ctx.send(content="🔴Echec : Aucun contrat supprimé !",hidden=True)
         
 @slash.slash(
     name="rechargerContrat",
-    description="[PATRON] Recharge les contrats",
+    description="Recharge les contrats",
+    default_permission = False,
+    permissions={
+        bot.guild_ids[0]: [
+            create_permission(bot.userIdStaff, SlashCommandPermissionType.ROLE, True),
+            create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
+    },
     options = [],
-    guild_ids=guild_ids)
+    guild_ids=bot.guild_ids)
 async def _supprimerContrat(ctx: SlashContext):
     await ctx.defer(hidden=True)   
 
-    if isAuthorized(ctx):
-        await bot.update_contract()
-        await ctx.send(content="Contrat rechargés !",hidden=True)
-    else:
-        await ctx.send(content="🔴Echec du rechargement des contrats !",hidden=True)
+    await bot.update_contract()
+    await ctx.send(content="Contrat rechargés !",hidden=True)
 
     
 bot.run()
