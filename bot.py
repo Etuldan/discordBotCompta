@@ -119,9 +119,9 @@ class Bot(discord.Client):
 
         taux = 0
         if(amount_income - amount_depense_deduc > 300000):
-            taux = 20
-        elif(amount_income - amount_depense_deduc > 75000):
             taux = 15
+        elif(amount_income - amount_depense_deduc > 75000):
+            taux = 10
             
         amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
         amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
