@@ -89,7 +89,7 @@ class Bot(discord.Client):
         amount_remaining = 0
         amount_entreprise = 0
 
-        messages = await self.channelRapportFailyV.history(limit=14).flatten() # 7 days
+        messages = await self.channelRapportFailyV.history(limit=7*2*3).flatten() # 7 days
 
         for msg in messages:
             if(msg.author.id == self.userIdBotFailyV):
