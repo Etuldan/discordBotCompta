@@ -32,7 +32,6 @@ class Bot(discord.Client):
     channelContrat = 0
     channelLogContrat = 0
     contracts = []
-    config = 0
     message_head_income = 0
     message_head_outcome = 0
     guild_ids = []
@@ -40,21 +39,21 @@ class Bot(discord.Client):
     def __init__(self):
         global slash
 
-        self.config = configparser.ConfigParser()
-        self.config.read('config.ini')
-        self.channelIdContrat = int(self.config['Channel']['Contrat'])
-        self.channelIdContratPatron = int(self.config['Channel']['ContratPatron'])
-        self.channelIdLogContrat = int(self.config['Channel']['LogContrat'])
-        self.channelIdHome = int(self.config['Channel']['Home'])
-        self.channelIdRapportFailyV = int(self.config['Channel']['RapportFailyV'])
-        self.channelIdCompta = int(self.config['Channel']['Compta'])
+        config = configparser.ConfigParser()
+        config.read('config.ini')
+        self.channelIdContrat = int(config['Channel']['Contrat'])
+        self.channelIdContratPatron = int(config['Channel']['ContratPatron'])
+        self.channelIdLogContrat = int(config['Channel']['LogContrat'])
+        self.channelIdHome = int(config['Channel']['Home'])
+        self.channelIdRapportFailyV = int(config['Channel']['RapportFailyV'])
+        self.channelIdCompta = int(config['Channel']['Compta'])
         
-        self.userIdBotFailyV = int(self.config['Role']['BotFailyV'])
-        self.userIdStaff = int(self.config['Role']['Staff'])
+        self.userIdBotFailyV = int(config['Role']['BotFailyV'])
+        self.userIdStaff = int(config['Role']['Staff'])
 
-        self.token = self.config['Discord']['Token']
+        self.token = config['Discord']['Token']
         self.guild_ids = []
-        tempList  = self.config['Discord']['GuildID'].split(',')
+        tempList  = config['Discord']['GuildID'].split(',')
         for tempid in tempList:
             self.guild_ids.append((int(tempid)))
         
