@@ -282,7 +282,7 @@ class Bot(discord.Client):
             if(rowContract[1] != 0):
                 if(rowContract[2] == False):
                     if(rowContract[3] == True):
-                        embedVar = discord.Embed(title="Contrat " + rowContract[0], description = str(rowContract[1]) + "$", color=COLOR_GREEN)
+                        embedVar = discord.Embed(title=rowContract[0], description = str(rowContract[1]) + "$", color=COLOR_GREEN)
                         msg = await self.client.get_channel(channelContrat).send(embed=embedVar)
                         await msg.add_reaction("✅")
                     else:
@@ -317,14 +317,19 @@ class Bot(discord.Client):
                     if(rowGuilds[1] == payload.guild_id):
                         contracts = self.cur.execute("SELECT company, positive, paid FROM contracts WHERE guildId = ?", (rowGuilds[0],))
                         for rowContract in contracts.fetchall():
-                            if(rowContract[2] == False and rowContract[0] in message.embeds[0].title and ((rowContract[1] == True and "Contrat" in message.embeds[0].title) or (rowContract[1] == False and "Contrat" not in message.embeds[0].title))):
-                                self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ?", (True, rowGuilds[0],))
+                            if(rowContract[2] == False and rowContract[0] in message.embeds[0].title):
+                                usages = self.cur.execute("SELECT USAGE FROM channelsType LEFT JOIN channels ON channelsType.id = channels.type WHERE channels.channelId = ?", (payload.channel_id,))
+                                positive = True
+                                if(usages.fetchone()[0] == "ContratPatron"):
+                                    positive = False
+
+                                self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ? AND company = ? AND positive = ?", (True, rowGuilds[0], message.embeds[0].title, positive, ))
                                 bot.con.commit()
                                 await message.delete()
 
                                 channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'LogContrat' AND guildId = ?", (rowGuilds[0],))
-                                if(rowContract[1] == True):
-                                    await self.client.get_channel(channels.fetchone()[0]).send("🟢 Le **" + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
+                                if(positive == True):
+                                    await self.client.get_channel(channels.fetchone()[0]).send("🟢 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
                                 else:
                                     await self.client.get_channel(channels.fetchone()[0]).send("🔴 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été payé par " +  user.display_name)
                                 await self.update_head(payload.guild_id)
