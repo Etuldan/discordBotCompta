@@ -26,8 +26,8 @@ slash = None
 
     
 class Bot(discord.Client):
-    message_head_income = []
-    message_head_outcome = []
+    message_head_income = {}
+    message_head_outcome = {}
     
     def __init__(self):
         global slash
@@ -238,7 +238,7 @@ class Bot(discord.Client):
         except:
             channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id LEFT JOIN guilds on channels.guildId = guilds.id WHERE channelsType.usage = 'ContratPatron' AND guilds.guildId = ?", (guildId,))
             channelContratPatron = channels.fetchone()[0]
-            self.message_head_income.insert(guildId,await self.client.get_channel(channelContratPatron).send(embed=embedEncaissement))
+            self.message_head_income[guildId] = await self.client.get_channel(channelContratPatron).send(embed=embedEncaissement)
 
         contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc, temp, reset FROM contracts  LEFT JOIN guilds ON contracts.guildId = guilds.id WHERE guilds.guildId = ?", (guildId,))
         embedPaiement=discord.Embed(title="Paiement", color=COLOR_RED)
@@ -263,7 +263,7 @@ class Bot(discord.Client):
         except:
             channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id LEFT JOIN guilds on channels.guildId = guilds.id WHERE channelsType.usage = 'ContratPatron' AND guilds.guildId = ?", (guildId,))
             channelContratPatron = channels.fetchone()[0]
-            self.message_head_outcome.insert(guildId, await self.client.get_channel(channelContratPatron).send(embed=embedPaiement))
+            self.message_head_outcome[guildId] = await self.client.get_channel(channelContratPatron).send(embed=embedPaiement)
 
     async def update_contract(self, guildId):
         self.con.commit()
