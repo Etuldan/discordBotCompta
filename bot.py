@@ -93,14 +93,14 @@ class Bot(discord.Client):
 
         guilds = self.cur.execute("SELECT id, guildId FROM guilds")
         for rowGuilds in guilds.fetchall():
-            contracts = self.cur.execute("SELECT * FROM contracts WHERE guildId = ?", (rowGuilds[0],))
+            contracts = self.cur.execute("SELECT amount, company, paid, positive, deduc FROM contracts WHERE guildId = ?", (rowGuilds[0],))
             for rowContract in contracts:
-                if(rowContract["amount"] != 0 and rowContract["positive"] == False and rowContract["paid"] == True):
-                    if(rowContract["deduc"] == False):
-                        amount_depense_nondeduc = amount_depense_nondeduc + rowContract["amount"]
-                    elif(rowContract["company"] != "Impôts" and rowContract["company"] != "Bénéfices"):
-                        amount_depense_deduc = amount_depense_deduc + rowContract["amount"]
-                elif(rowContract["amount"] != 0 and rowContract["positive"] == True and rowContract["paid"] == True):
+                if(rowContract[0] != 0 and rowContract[3] == False and rowContract[2] == True):
+                    if(rowContract[4] == False):
+                        amount_depense_nondeduc = amount_depense_nondeduc + rowContract[0]
+                    elif(rowContract[1] != "Impôts" and rowContract[1] != "Bénéfices"):
+                        amount_depense_deduc = amount_depense_deduc + rowContract[0]
+                elif(rowContract[0] != 0 and rowContract[3] == True and rowContract[2] == True):
                     amount_entreprise = amount_entreprise + rowContract.amount
 
             amount_depense_deduc = amount_depense_deduc
