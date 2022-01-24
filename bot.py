@@ -21,6 +21,7 @@ COLOR_GREEN = 0x00ff00
 COLOR_LIGHT_GREY = 0xBCC0C0
 COLOR_DARK_GOLD = 0xC27C0E
 COLOR_DEFAULT = 0
+COLOR_ORANGE  = 0xFF5733
 
 slash = None
 
@@ -101,7 +102,7 @@ class Bot(discord.Client):
                     elif(rowContract[1] != "Impôts" and rowContract[1] != "Bénéfices"):
                         amount_depense_deduc = amount_depense_deduc + rowContract[0]
                 elif(rowContract[0] != 0 and rowContract[3] == True and rowContract[2] == True):
-                    amount_entreprise = amount_entreprise + rowContract.amount
+                    amount_entreprise = amount_entreprise + rowContract[0]
 
             amount_depense_deduc = amount_depense_deduc
 
