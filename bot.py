@@ -303,6 +303,7 @@ class Bot(discord.Client):
     
     async def on_raw_reaction_add(self, payload):
         try:
+            if(payload.emoji.name == "✅"):
             guild = self.client.get_guild(payload.guild_id)
             user = guild.get_member(payload.user_id)
             
@@ -312,10 +313,12 @@ class Bot(discord.Client):
             channel = self.client.get_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
             
-            if(payload.emoji.name == "✅"):
                 guilds = self.cur.execute("SELECT id, guildId FROM guilds")
                 for rowGuilds in guilds.fetchall():
                     if(rowGuilds[1] == payload.guild_id):
+                        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE guildId = ? AND (channelsType.usage = 'Contrat' OR channelsType.usage = 'ContratPatron')", (rowGuilds[0],))
+                        for channelSQL in channels.fetchall():
+                            if(channelSQL[0] == payload.channel_id):
                         contracts = self.cur.execute("SELECT company, positive, paid FROM contracts WHERE guildId = ?", (rowGuilds[0],))
                         for rowContract in contracts.fetchall():
                             if(rowContract[2] == False and rowContract[0] in message.embeds[0].title):
