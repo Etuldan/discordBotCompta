@@ -96,12 +96,12 @@ class Bot(discord.Client):
         for rowGuilds in guilds.fetchall():
             contracts = self.cur.execute("SELECT amount, company, paid, positive, deduc FROM contracts WHERE guildId = ?", (rowGuilds[0],))
             for rowContract in contracts:
-                if(rowContract[0] != 0 and rowContract[3] == False and rowContract[2] == True):
-                    if(rowContract[4] == False):
+                if(rowContract[0] != 0 and rowContract[3] == 0 and rowContract[2] == 1):
+                    if(rowContract[4] == 0):
                         amount_depense_nondeduc = amount_depense_nondeduc + rowContract[0]
                     elif(rowContract[1] != "Impôts" and rowContract[1] != "Bénéfices"):
                         amount_depense_deduc = amount_depense_deduc + rowContract[0]
-                elif(rowContract[0] != 0 and rowContract[3] == True and rowContract[2] == True):
+                elif(rowContract[0] != 0 and rowContract[3] == 1 and rowContract[2] == 1):
                     amount_entreprise = amount_entreprise + rowContract[0]
 
             amount_depense_deduc = amount_depense_deduc
@@ -115,21 +115,22 @@ class Bot(discord.Client):
             amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
             amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
 
-            await self.writePDF(rowGuilds.id, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc)
+            await self.writePDF(rowGuilds[0], taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc)
 
-            contracts = self.cur.execute("SELECT id, company, reset, temp FROM contracts WHERE guildId = ?" , (rowGuilds[0],))
+            contracts = self.cur.execute("SELECT company, reset, temp, id FROM contracts WHERE guildId = ?" , (rowGuilds[0],))
             for rowContract in contracts.fetchall():
                 if(rowContract[0] == "Impôts"):
-                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND company = ?", (amount_impot, rowGuilds[0], "Impôts"))
-                elif(rowContract[1] == "Bénéfices"):
-                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND company = ?", (max(0,amount_remaining), rowGuilds[0], "Bénéfices"))
-                self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ?", (False, rowGuilds[0],))
-                if rowContract[2] == True:
-                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ?", (0, rowGuilds[0],))
-                if rowContract[3] == True:
-                    self.cur.execute("DELETE FROM contracts WHERE id = ?", (rowContract[0],))
+                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND company = ? AND id = ?", (amount_impot, rowGuilds[0], "Impôts", rowContract[3],))
+                elif(rowContract[0] == "Bénéfices"):
+                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND company = ? AND id = ?", (max(0,amount_remaining), rowGuilds[0], "Bénéfices", rowContract[3],))
 
-            await bot.update_contract(rowGuilds[0])
+                if rowContract[1] == 1:
+                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND id = ?", (0, rowGuilds[0],rowContract[3],))
+                if rowContract[2] == 1:
+                    self.cur.execute("DELETE FROM contracts WHERE guildId = ? AND id = ?", (rowGuilds[0], rowContract[3],))
+
+            self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ?", (0, rowGuilds[0],))
+            await bot.update_contract(rowGuilds[1])
 
     async def writePDF(self, guildId, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc):
         if platform == "linux" or platform == "linux2":
@@ -137,13 +138,10 @@ class Bot(discord.Client):
         elif platform == "win32":
             locale.setlocale(locale.LC_ALL, 'fr_FR')
 
-        self.cur.execute("SELECT id FROM guilds WHERE guildId = ?" , (guildId,))
-        rowGuild = self.cur.fetchone()
-
         pdf = FPDF(orientation='P', unit='mm', format='A4')
         pdf.add_page()
         pdf.rect(5.0, 5.0, 200.0,287.0)
-        pdf.image("logo.png", link='', type='', x=70.0, y=6.0, h=1920/80)
+        #pdf.image("logo.png", link='', type='', x=70.0, y=6.0, h=1920/80)
 
         pdf.set_xy(100.0,30.0)
         pdf.set_font('Arial', 'B', 20)
@@ -189,9 +187,9 @@ class Bot(discord.Client):
         i = 0.0
         pdf.set_font('Arial', '', 13)
 
-        contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc FROM contracts WHERE guildId = ?", (rowGuild.id,))
+        contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc FROM contracts WHERE guildId = ?", (guildId,))
         for rowContract in contracts.fetchall():
-            if(rowContract[1] != 0 and rowContract[2] == True and rowContract[3] == True):
+            if(rowContract[1] != 0 and rowContract[2] == 1 and rowContract[3] == 1):
                 pdf.set_xy(100.0, 110 + i)
                 pdf.cell(w=10.0, h=10.0, align='R', txt=rowContract[0], border=0)
                 pdf.cell(w=10.0, h=10.0, align='L', txt=str(rowContract[1]) + " $", border=0)
@@ -202,15 +200,17 @@ class Bot(discord.Client):
         pdf.cell(w=10.0, h=10.0, align='R', txt="Détails Dépenses déductibles", border=0)
         pdf.set_font('Arial', '', 13)
 
+        contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc FROM contracts WHERE guildId = ?", (guildId,))
         for rowContract in contracts.fetchall():
-            if(rowContract[1] != 0 and rowContract[2] == False and rowContract[4] == True and rowContract[3] == True and rowContract[0] != "Impôts" and rowContract[0] != "Bénéfices"):
+            if(rowContract[1] != 0 and rowContract[2] == 0 and rowContract[4] == 1 and rowContract[3] == 1 and rowContract[0] != "Impôts" and rowContract[0] != "Bénéfices"):
                 pdf.set_xy(100.0, 125 + i)
                 pdf.cell(w=10.0, h=10.0, align='R', txt=rowContract[0], border=0)
                 pdf.cell(w=10.0, h=10.0, align='L', txt=str(rowContract[1]) + " $", border=0)
                 i = i + 5
 
         pdf.output('Impots_Hebdo.pdf','F')
-        await self.client.get_channel(rowGuild.guildId).send(file=discord.File('Impots_Hebdo.pdf'))
+        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'Compta' AND channels.guildId = ?", (guildId,))
+        await self.client.get_channel(channels.fetchone()[0]).send(file=discord.File('Impots_Hebdo.pdf'))
 
     async def background_task(self):
         await self.client.wait_until_ready()
@@ -394,25 +394,25 @@ bot = Bot()
 async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, typec: bool):
     await ctx.defer(hidden=True)   
     
-    positive = False
-    deduc = True
-    reset = False
-    temp = False
+    positive = 0
+    deduc = 1
+    reset = 0
+    temp = 0
 
     if(typec == 1):
-        positive = True
+        positive = 1
     if(typec == 2):
-        deduc = False
+        deduc = 0
     elif(typec == 3):
-        deduc = False
-        reset = True
+        deduc = 0
+        reset = 1
     elif(typec == 4):
-        reset = True
+        reset = 1
     elif(typec == 5):
-        temp = True
+        temp = 1
     elif(typec == 6):
-        deduc = False
-        temp = True
+        deduc = 0
+        temp = 1
 
     bot.cur.execute("INSERT INTO contracts (guildId, company, amount, paid, positive, deduc, reset, temp) SELECT id, ?, ?, ?, ?, ?, ?, ? FROM guilds WHERE guildId = ?", (entreprise, montant, False, positive, deduc, reset, temp, ctx.guild_id))
     await bot.update_contract(ctx.guild_id)
@@ -437,7 +437,7 @@ async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, type
     guild_ids=bot.guild_ids)
 async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
     await ctx.defer(hidden=True)    
-    bot.cur.execute("UPDATE contracts SET amount = (CASE WHEN reset = True THEN amount + ? ELSE ? END) WHERE guildId = (SELECT id FROM guilds WHERE guildId = ?) AND company = ?", (montant, montant, ctx.guild_id, entreprise))
+    bot.cur.execute("UPDATE contracts SET amount = (CASE WHEN reset = 1 THEN amount + ? ELSE ? END) WHERE guildId = (SELECT id FROM guilds WHERE guildId = ?) AND company = ?", (montant, montant, ctx.guild_id, entreprise))
     await bot.update_contract(ctx.guild_id)
     await ctx.send(content="Contrat " + entreprise + " modifié !",hidden=True)
 
