@@ -9,7 +9,7 @@ from discord_slash.model import SlashCommandPermissionType
 from sys import platform
 import locale
 from fpdf import FPDF
-from datetime import datetime, timedelta
+import datetime
 
 import asyncio
 
@@ -75,7 +75,10 @@ class Bot(discord.Client):
             amount_remaining = 0
             amount_entreprise = 0
 
-            messages = await self.client.get_channel(channels.fetchone()[0]).history(limit=7*2*3).flatten() # 7 days
+            today = datetime.date.today()
+            last_tuesday = today - datetime.timedelta(days=today.weekday()) + datetime.timedelta(days = 1)
+            dt = datetime.datetime.combine(last_tuesday, datetime.time())
+            messages = await self.client.get_channel(channels.fetchone()[0]).history(limit=100, after=dt).flatten()
 
             for msg in messages:
                 if(msg.author.id == self.userIdBotFailyV):
@@ -123,7 +126,7 @@ class Bot(discord.Client):
                     self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND company = ? AND id = ?", (amount_impot, rowGuilds[0], "Impôts", rowContract[3],))
                 elif(rowContract[0] == "Bénéfices"):
                     self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND company = ? AND id = ?", (max(0,amount_remaining), rowGuilds[0], "Bénéfices", rowContract[3],))
-
+                
                 if rowContract[1] == 1:
                     self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND id = ?", (0, rowGuilds[0],rowContract[3],))
                 if rowContract[2] == 1:
@@ -148,9 +151,9 @@ class Bot(discord.Client):
         pdf.set_text_color(50, 50, 220)
         pdf.cell(w=10.0, h=10.0, align='C', txt="Feuille d'Impôts", border=0)
 
-        now = datetime.now()
-        monday = now - timedelta(days = now.weekday() + 7)
-        sunday = monday + timedelta(days = 6)
+        now = datetime.datetime.now()
+        monday = now - datetime.timedelta(days = now.weekday() + 7)
+        sunday = monday + datetime.timedelta(days = 6)
         pdf.set_xy(100.0, 40.0)
         pdf.set_font('Arial', 'B', 14)
         pdf.set_text_color(50, 50, 50)
@@ -216,8 +219,8 @@ class Bot(discord.Client):
         await self.client.wait_until_ready()
         while not self.client.is_closed():
             await asyncio.sleep(50)
-            now = datetime.now().time()
-            if(datetime.now().weekday() == 0 and now.hour == 3 and now.minute == 0):
+            now = datetime.datetime.now().time()
+            if(datetime.datetime.now().weekday() == 0 and now.hour == 7 and now.minute == 0):
                 await bot.retreive_contract_discord()
      
     async def update_head(self, guildId):
@@ -304,39 +307,39 @@ class Bot(discord.Client):
     async def on_raw_reaction_add(self, payload):
         try:
             if(payload.emoji.name == "✅"):
-            guild = self.client.get_guild(payload.guild_id)
-            user = guild.get_member(payload.user_id)
-            
-            if user == self.client.user:
-                return
-            
-            channel = self.client.get_channel(payload.channel_id)
-            message = await channel.fetch_message(payload.message_id)
-            
+                guild = self.client.get_guild(payload.guild_id)
+                user = guild.get_member(payload.user_id)
+
+                if user == self.client.user:
+                    return
+
+                channel = self.client.get_channel(payload.channel_id)
+                message = await channel.fetch_message(payload.message_id)
+
                 guilds = self.cur.execute("SELECT id, guildId FROM guilds")
                 for rowGuilds in guilds.fetchall():
                     if(rowGuilds[1] == payload.guild_id):
                         channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE guildId = ? AND (channelsType.usage = 'Contrat' OR channelsType.usage = 'ContratPatron')", (rowGuilds[0],))
                         for channelSQL in channels.fetchall():
                             if(channelSQL[0] == payload.channel_id):
-                        contracts = self.cur.execute("SELECT company, positive, paid FROM contracts WHERE guildId = ?", (rowGuilds[0],))
-                        for rowContract in contracts.fetchall():
-                            if(rowContract[2] == False and rowContract[0] in message.embeds[0].title):
-                                usages = self.cur.execute("SELECT USAGE FROM channelsType LEFT JOIN channels ON channelsType.id = channels.type WHERE channels.channelId = ?", (payload.channel_id,))
-                                positive = True
-                                if(usages.fetchone()[0] == "ContratPatron"):
-                                    positive = False
+                                contracts = self.cur.execute("SELECT company, positive, paid FROM contracts WHERE guildId = ?", (rowGuilds[0],))
+                                for rowContract in contracts.fetchall():
+                                    if(rowContract[2] == False and rowContract[0] in message.embeds[0].title):
+                                        usages = self.cur.execute("SELECT USAGE FROM channelsType LEFT JOIN channels ON channelsType.id = channels.type WHERE channels.channelId = ?", (payload.channel_id,))
+                                        positive = True
+                                        if(usages.fetchone()[0] == "ContratPatron"):
+                                            positive = False
 
-                                self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ? AND company = ? AND positive = ?", (True, rowGuilds[0], message.embeds[0].title, positive, ))
-                                bot.con.commit()
-                                await message.delete()
+                                        self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ? AND company = ? AND positive = ?", (True, rowGuilds[0], message.embeds[0].title, positive, ))
+                                        bot.con.commit()
+                                        await message.delete()
 
-                                channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'LogContrat' AND guildId = ?", (rowGuilds[0],))
-                                if(positive == True):
-                                    await self.client.get_channel(channels.fetchone()[0]).send("🟢 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
-                                else:
-                                    await self.client.get_channel(channels.fetchone()[0]).send("🔴 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été payé par " +  user.display_name)
-                                await self.update_head(payload.guild_id)
+                                        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'LogContrat' AND guildId = ?", (rowGuilds[0],))
+                                        if(positive == True):
+                                            await self.client.get_channel(channels.fetchone()[0]).send("🟢 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
+                                        else:
+                                            await self.client.get_channel(channels.fetchone()[0]).send("🔴 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été payé par " +  user.display_name)
+                        await self.update_head(payload.guild_id)
                         
         except discord.errors.NotFound:
             pass
