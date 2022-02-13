@@ -11,137 +11,128 @@ import locale
 from fpdf import FPDF
 from datetime import datetime, timedelta
 
-import io
 import asyncio
-import json
 
 import configparser
+import sqlite3
 
-DB_CONTRACT = "data.json"
-
-COLOR_RED = 15158332
+COLOR_RED = 0xE74C3C
 COLOR_GREEN = 0x00ff00
-COLOR_LIGHT_GREY = 12370112
-COLOR_DARK_GOLD = 12745742
+COLOR_LIGHT_GREY = 0xBCC0C0
+COLOR_DARK_GOLD = 0xC27C0E
 COLOR_DEFAULT = 0
+COLOR_ORANGE  = 0xFF5733
 
 slash = None
 
     
 class Bot(discord.Client):
-    channelContrat = 0
-    channelLogContrat = 0
-    contracts = []
-    message_head_income = 0
-    message_head_outcome = 0
-    guild_ids = []
+    message_head_income = {}
+    message_head_outcome = {}
     
     def __init__(self):
         global slash
 
         config = configparser.ConfigParser()
-        config.read('config.ini')
-        self.channelIdContrat = int(config['Channel']['Contrat'])
-        self.channelIdContratPatron = int(config['Channel']['ContratPatron'])
-        self.channelIdLogContrat = int(config['Channel']['LogContrat'])
-        self.channelIdHome = int(config['Channel']['Home'])
-        self.channelIdRapportFailyV = int(config['Channel']['RapportFailyV'])
-        self.channelIdCompta = int(config['Channel']['Compta'])
-        
+        config.read('config.ini')        
         self.userIdBotFailyV = int(config['Role']['BotFailyV'])
-        self.userIdStaff = int(config['Role']['Staff'])
-
         self.token = config['Discord']['Token']
+
+        self.con = sqlite3.connect('database.db')
+        self.cur = self.con.cursor()
+
+        self.permissions = {}
         self.guild_ids = []
-        tempList  = config['Discord']['GuildID'].split(',')
-        for tempid in tempList:
-            self.guild_ids.append((int(tempid)))
-        
+        guilds = self.cur.execute("SELECT guildId, id FROM guilds")
+        for rowGuilds in guilds.fetchall():
+            self.guild_ids.append((int(rowGuilds[0])))
+            roles_ids = []
+            roles = self.cur.execute("SELECT roleId FROM roles LEFT JOIN rolesType ON roles.type = rolesType.id WHERE rolesType.usage = 'Staff' AND guildId = ?" ,(rowGuilds[1],))
+            for rowRoles in roles.fetchall():
+                roles_ids.append(create_permission(int(rowRoles[0]), SlashCommandPermissionType.ROLE, True))
+            roles_ids.append(create_permission(650295737308938322, SlashCommandPermissionType.USER, True))
+            self.permissions[int(rowGuilds[0])] = roles_ids
+
+            
         intents = discord.Intents.all()
         self.client = discord.Client(intents=intents)       
         slash = SlashCommand(self.client, sync_commands=True)
         
         self.on_ready = self.client.event(self.on_ready)
-        self.on_message = self.client.event(self.on_message)
         self.on_raw_reaction_add = self.client.event(self.on_raw_reaction_add)
-        
-        self.contracts = []
-        with open(DB_CONTRACT, 'r') as json_file:
-            data = json.load(json_file)
-            for company in data:
-                contrat = Contrat(company, data[company]["amount"])
-                contrat.positive = data[company]["positive"]
-                contrat.paid = data[company]["paid"]
-                contrat.deduc = data[company]["deduc"]
-                contrat.reset = data[company]["reset"]
-                contrat.temp = data[company]["temp"]
-                self.contracts.append(contrat)
-        
+              
         self.client.loop.create_task(self.background_task())
     
     async def retreive_contract_discord(self):
-        amount_income = 0
-        amount_outcome = 0
-        amount_depense_deduc = 0
-        amount_depense_nondeduc = 0
-        amount_impot = 0
-        amount_remaining = 0
-        amount_entreprise = 0
+        guilds = self.cur.execute("SELECT id, guildId FROM guilds")
+        for rowGuilds in guilds.fetchall():
+            channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'RapportFailyV' AND guildId = ?", (rowGuilds[0],))
+            amount_income = 0
+            amount_outcome = 0
+            amount_depense_deduc = 0
+            amount_depense_nondeduc = 0
+            amount_impot = 0
+            amount_remaining = 0
+            amount_entreprise = 0
 
-        messages = await self.channelRapportFailyV.history(limit=7*2*3).flatten() # 7 days
+            messages = await self.client.get_channel(channels.fetchone()[0]).history(limit=7*2*3).flatten() # 7 days
 
-        for msg in messages:
-            if(msg.author.id == self.userIdBotFailyV):
-                embeds = msg.embeds
-                for embed in embeds:
-                    if(embed.title == "Détails Financier"):
-                        for field in embed.fields:
-                            if(field.name == "Argent Gagné (Factures)"):
-                                amount_income = amount_income + int(field.value[3:-5])
-                            elif(field.name == "Argent Gagné (Fourrières)"):
-                                amount_income = amount_income + int(field.value[3:-5])
-                            elif(field.name == "Argent Dépensé (Radar Automatique)"):
-                                amount_outcome = amount_outcome - int(field.value[3:-5])
-                            elif(field.name == "Argent Dépensé (Salaires Total)"):
-                                amount_outcome = amount_outcome - int(field.value[3:-5])
+            for msg in messages:
+                if(msg.author.id == self.userIdBotFailyV):
+                    embeds = msg.embeds
+                    for embed in embeds:
+                        if(embed.title == "Détails Financier"):
+                            for field in embed.fields:
+                                if(field.name == "Argent Gagné (Factures)"):
+                                    amount_income = amount_income + int(field.value[3:-5])
+                                elif(field.name == "Argent Gagné (Fourrières)"):
+                                    amount_income = amount_income + int(field.value[3:-5])
+                                elif(field.name == "Argent Dépensé (Radar Automatique)"):
+                                    amount_outcome = amount_outcome - int(field.value[3:-5])
+                                elif(field.name == "Argent Dépensé (Salaires Total)"):
+                                    amount_outcome = amount_outcome - int(field.value[3:-5])
 
-        for contract in self.contracts:
-            if(contract.amount != 0 and contract.positive == False and contract.paid == True):
-                if(contract.deduc == False):
-                    amount_depense_nondeduc = amount_depense_nondeduc + contract.amount
-                elif(contract.company != "Impôts" and contract.company != "Bénéfices"):
-                    amount_depense_deduc = amount_depense_deduc + contract.amount
-            elif(contract.amount != 0 and contract.positive == True and contract.paid == True):
-                amount_entreprise = amount_entreprise + contract.amount
+        guilds = self.cur.execute("SELECT id, guildId FROM guilds")
+        for rowGuilds in guilds.fetchall():
+            contracts = self.cur.execute("SELECT amount, company, paid, positive, deduc FROM contracts WHERE guildId = ?", (rowGuilds[0],))
+            for rowContract in contracts:
+                if(rowContract[0] != 0 and rowContract[3] == 0 and rowContract[2] == 1):
+                    if(rowContract[4] == 0):
+                        amount_depense_nondeduc = amount_depense_nondeduc + rowContract[0]
+                    elif(rowContract[1] != "Impôts" and rowContract[1] != "Bénéfices"):
+                        amount_depense_deduc = amount_depense_deduc + rowContract[0]
+                elif(rowContract[0] != 0 and rowContract[3] == 1 and rowContract[2] == 1):
+                    amount_entreprise = amount_entreprise + rowContract[0]
 
-        amount_depense_deduc = amount_depense_deduc
+            amount_depense_deduc = amount_depense_deduc
 
-        taux = 0
-        if(amount_income - amount_depense_deduc > 300000):
-            taux = 15
-        elif(amount_income - amount_depense_deduc > 75000):
-            taux = 10
-            
-        amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
-        amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
+            taux = 0
+            if(amount_income - amount_depense_deduc > 300000):
+                taux = 15
+            elif(amount_income - amount_depense_deduc > 75000):
+                taux = 10
 
-        await self.writePDF(taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc)
+            amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
+            amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
 
-        for contract in self.contracts:
-            if(contract.company == "Impôts"):
-                contract.amount = amount_impot
-            elif(contract.company == "Bénéfices"):
-                contract.amount = amount_remaining
-            contract.paid = False
-            if contract.reset == True:
-                contract.amount = 0
-            if contract.temp == True:
-                self.contracts.remove(contract)
+            await self.writePDF(rowGuilds[0], taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc)
 
-        bot.update_db()
-        await bot.update_contract()
+            contracts = self.cur.execute("SELECT company, reset, temp, id FROM contracts WHERE guildId = ?" , (rowGuilds[0],))
+            for rowContract in contracts.fetchall():
+                if(rowContract[0] == "Impôts"):
+                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND company = ? AND id = ?", (amount_impot, rowGuilds[0], "Impôts", rowContract[3],))
+                elif(rowContract[0] == "Bénéfices"):
+                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND company = ? AND id = ?", (max(0,amount_remaining), rowGuilds[0], "Bénéfices", rowContract[3],))
 
-    async def writePDF(self, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc):
+                if rowContract[1] == 1:
+                    self.cur.execute("UPDATE contracts SET amount = ? WHERE guildId = ? AND id = ?", (0, rowGuilds[0],rowContract[3],))
+                if rowContract[2] == 1:
+                    self.cur.execute("DELETE FROM contracts WHERE guildId = ? AND id = ?", (rowGuilds[0], rowContract[3],))
+
+            self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ?", (0, rowGuilds[0],))
+            await bot.update_contract(rowGuilds[1])
+
+    async def writePDF(self, guildId, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc):
         if platform == "linux" or platform == "linux2":
             locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
         elif platform == "win32":
@@ -150,7 +141,7 @@ class Bot(discord.Client):
         pdf = FPDF(orientation='P', unit='mm', format='A4')
         pdf.add_page()
         pdf.rect(5.0, 5.0, 200.0,287.0)
-        pdf.image("logo.png", link='', type='', x=70.0, y=6.0, h=1920/80)
+        #pdf.image("logo.png", link='', type='', x=70.0, y=6.0, h=1920/80)
 
         pdf.set_xy(100.0,30.0)
         pdf.set_font('Arial', 'B', 20)
@@ -169,7 +160,7 @@ class Bot(discord.Client):
         pdf.set_font('Arial', '', 15)
         pdf.set_text_color(50, 50, 50)
         pdf.cell(w=10.0, h=10.0, align='R', txt="Chiffre d'affaire Net", border=0)
-        pdf.cell(w=10.0, h=10.0, align='L', txt=str(amount_income - amount_depense_deduc) + " $", border=0)
+        pdf.cell(w=10.0, h=10.0, align='L', txt=str(max(0, amount_income - amount_depense_deduc)) + " $", border=0)
 
         pdf.set_xy(100.0,62.0)
         pdf.cell(w=10.0, h=10.0, align='R', txt="Taux d'imposition", border=0)
@@ -195,26 +186,31 @@ class Bot(discord.Client):
         pdf.cell(w=10.0, h=10.0, align='R', txt="Détails Recettes", border=0)
         i = 0.0
         pdf.set_font('Arial', '', 13)
-        for contract in self.contracts:
-            if(contract.amount != 0 and contract.positive == True and contract.paid == True):
+
+        contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc FROM contracts WHERE guildId = ?", (guildId,))
+        for rowContract in contracts.fetchall():
+            if(rowContract[1] != 0 and rowContract[2] == 1 and rowContract[3] == 1):
                 pdf.set_xy(100.0, 110 + i)
-                pdf.cell(w=10.0, h=10.0, align='R', txt=contract.company, border=0)
-                pdf.cell(w=10.0, h=10.0, align='L', txt=str(contract.amount) + " $", border=0)
+                pdf.cell(w=10.0, h=10.0, align='R', txt=rowContract[0], border=0)
+                pdf.cell(w=10.0, h=10.0, align='L', txt=str(rowContract[1]) + " $", border=0)
                 i = i + 5
 
         pdf.set_font('Arial', 'B', 15)
         pdf.set_xy(100.0, i+120)
         pdf.cell(w=10.0, h=10.0, align='R', txt="Détails Dépenses déductibles", border=0)
         pdf.set_font('Arial', '', 13)
-        for contract in self.contracts:
-            if(contract.amount != 0 and contract.positive == False and contract.deduc == True and contract.paid == True and contract.company != "Impôts" and contract.company != "Bénéfices"):
+
+        contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc FROM contracts WHERE guildId = ?", (guildId,))
+        for rowContract in contracts.fetchall():
+            if(rowContract[1] != 0 and rowContract[2] == 0 and rowContract[4] == 1 and rowContract[3] == 1 and rowContract[0] != "Impôts" and rowContract[0] != "Bénéfices"):
                 pdf.set_xy(100.0, 125 + i)
-                pdf.cell(w=10.0, h=10.0, align='R', txt=contract.company, border=0)
-                pdf.cell(w=10.0, h=10.0, align='L', txt=str(contract.amount) + " $", border=0)
+                pdf.cell(w=10.0, h=10.0, align='R', txt=rowContract[0], border=0)
+                pdf.cell(w=10.0, h=10.0, align='L', txt=str(rowContract[1]) + " $", border=0)
                 i = i + 5
 
-        pdf.output('Comptabilite_Bennys_-_Impots_Hebdo.pdf','F')
-        await self.channelCompta.send(file=discord.File('Comptabilite_Bennys_-_Impots_Hebdo.pdf'))
+        pdf.output('Impots_Hebdo.pdf','F')
+        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'Compta' AND channels.guildId = ?", (guildId,))
+        await self.client.get_channel(channels.fetchone()[0]).send(file=discord.File('Impots_Hebdo.pdf'))
 
     async def background_task(self):
         await self.client.wait_until_ready()
@@ -223,94 +219,91 @@ class Bot(discord.Client):
             now = datetime.now().time()
             if(datetime.now().weekday() == 0 and now.hour == 3 and now.minute == 0):
                 await bot.retreive_contract_discord()
-    
-    async def on_message(self, message):
-        if message.author == self.client.user:
-            return
-        
-        if message.author.bot:
-            return
-        
-        if message.channel.id == self.channelIdLogContrat or message.channel.id == self.channelIdContrat or message.channel.id == self.channelIdContratPatron:
-            await message.delete()
-    
-    async def update_head(self):           
+     
+    async def update_head(self, guildId):
         embedEncaissement=discord.Embed(title="Encaissement", color=COLOR_GREEN)
-        for contract in bot.contracts:
-            name = ""
-            if(contract.positive == False):
-                continue
-            name = name + contract.company
 
-            amount = str(contract.amount)
-            if(contract.paid == True):
+        contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc, temp, reset FROM contracts  LEFT JOIN guilds ON contracts.guildId = guilds.id WHERE guilds.guildId = ?", (guildId,))
+        for rowContract in contracts.fetchall():
+            name = ""
+            if(rowContract[2] == False):
+                continue
+            name = name + rowContract[0]
+
+            amount = str(rowContract[1])
+            if(rowContract[3] == True):
                 amount = amount + " ✅"
             embedEncaissement.add_field(name=name, value=amount, inline=False)
         try:
-            await self.message_head_income.edit(embed = embedEncaissement)
+            await self.message_head_income[guildId].edit(embed = embedEncaissement)
         except:
-            self.message_head_income = await self.channelContratPatron.send(embed=embedEncaissement)
+            channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id LEFT JOIN guilds on channels.guildId = guilds.id WHERE channelsType.usage = 'ContratPatron' AND guilds.guildId = ?", (guildId,))
+            channelContratPatron = channels.fetchone()[0]
+            self.message_head_income[guildId] = await self.client.get_channel(channelContratPatron).send(embed=embedEncaissement)
 
+        contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc, temp, reset FROM contracts  LEFT JOIN guilds ON contracts.guildId = guilds.id WHERE guilds.guildId = ?", (guildId,))
         embedPaiement=discord.Embed(title="Paiement", color=COLOR_RED)
-        for contract in bot.contracts:
+        for rowContract in contracts.fetchall():
             name = ""
-            if(contract.positive == True):
+            if(rowContract[2] == True):
                 continue
-            if(contract.deduc == True):
+            if(rowContract[4] == True):
                 name = name + "💰 "
-            if(contract.reset == False and contract.temp == False):
+            if(rowContract[6] == False and rowContract[5] == False):
                 name = name + "🔄 "
-            if(contract.temp == True):
+            if(rowContract[5] == True):
                 name = name + "♻ "
-            name = name + contract.company
+            name = name + rowContract[0]
             
-            amount = str(contract.amount)
-            if(contract.paid == True):
+            amount = str(rowContract[1])
+            if(rowContract[3] == True):
                 amount = amount + " ✅"
             embedPaiement.add_field(name=name, value=amount, inline=False)
         try:
-            await self.message_head_outcome.edit(embed = embedPaiement)
+            await self.message_head_outcome[guildId].edit(embed = embedPaiement)
         except:
-            self.message_head_outcome = await self.channelContratPatron.send(embed=embedPaiement)
-    
-    async def update_contract(self):
-        await self.channelContrat.purge()
-        await self.channelContratPatron.purge()
-          
-        await self.update_head()
-        
-        for contract in self.contracts:
-            if(contract.amount != 0):
-                if(contract.paid == False):
-                    if(contract.positive == True):
-                        embedVar = discord.Embed(title="Contrat " + contract.company, description = str(contract.amount) + "$", color=COLOR_GREEN)
-                        msg = await self.channelContrat.send(embed=embedVar)
+            channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id LEFT JOIN guilds on channels.guildId = guilds.id WHERE channelsType.usage = 'ContratPatron' AND guilds.guildId = ?", (guildId,))
+            channelContratPatron = channels.fetchone()[0]
+            self.message_head_outcome[guildId] = await self.client.get_channel(channelContratPatron).send(embed=embedPaiement)
+
+    async def update_contract(self, guildId):
+        self.con.commit()
+
+        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id LEFT JOIN guilds on channels.guildId = guilds.id WHERE channelsType.usage = 'Contrat' AND guilds.guildId =  ?", (guildId,))
+        channelContrat = channels.fetchone()[0]
+        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id LEFT JOIN guilds on channels.guildId = guilds.id WHERE channelsType.usage = 'ContratPatron' AND guilds.guildId = ?", (guildId,))
+        channelContratPatron = channels.fetchone()[0]
+        await self.client.get_channel(channelContrat).purge()
+        await self.client.get_channel(channelContratPatron).purge()
+
+        await self.update_head(guildId)
+
+        contracts = self.cur.execute("SELECT company, amount, paid, positive FROM contracts LEFT JOIN guilds ON contracts.guildId = guilds.id WHERE guilds.guildId = ?", (guildId,))
+        for rowContract in contracts.fetchall():
+            if(rowContract[1] != 0):
+                if(rowContract[2] == False):
+                    if(rowContract[3] == True):
+                        embedVar = discord.Embed(title=rowContract[0], description = str(rowContract[1]) + "$", color=COLOR_GREEN)
+                        msg = await self.client.get_channel(channelContrat).send(embed=embedVar)
                         await msg.add_reaction("✅")
                     else:
-                        embedVar = discord.Embed(title=contract.company, description = str(contract.amount) + "$", color=COLOR_RED)
-                        msg = await self.channelContratPatron.send(embed=embedVar)
+                        embedVar = discord.Embed(title=rowContract[0], description = str(rowContract[1]) + "$", color=COLOR_RED)
+                        msg = await self.client.get_channel(channelContratPatron).send(embed=embedVar)
                         await msg.add_reaction("✅")
     
     async def on_ready(self):
         print(str(self.client.user) + " has connected to Discord")
         print("Bot ID is " + str(self.client.user.id))
-        
-        self.channelHome = self.client.get_channel(self.channelIdHome)
-        self.channelLogContrat = self.client.get_channel(self.channelIdLogContrat)
-        self.channelContrat = self.client.get_channel(self.channelIdContrat)
-        self.channelContratPatron = self.client.get_channel(self.channelIdContratPatron)
-        self.channelRapportFailyV = self.client.get_channel(self.channelIdRapportFailyV)
-        self.channelCompta = self.client.get_channel(self.channelIdCompta)
 
-        await self.update_contract()
+        guilds = self.cur.execute("SELECT id, guildId FROM guilds")
+        for rowGuilds in guilds.fetchall():
+            await self.update_contract(rowGuilds[1])
         await self.client.wait_until_ready()
         print(str(self.client.user) + " is now ready!")
     
     async def on_raw_reaction_add(self, payload):
-        if payload.channel_id != self.channelIdContrat and payload.channel_id != self.channelIdContratPatron:
-            return
-        
         try:
+            if(payload.emoji.name == "✅"):
             guild = self.client.get_guild(payload.guild_id)
             user = guild.get_member(payload.user_id)
             
@@ -320,48 +313,37 @@ class Bot(discord.Client):
             channel = self.client.get_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
             
-            if(payload.emoji.name == "✅"):
-                for contract in self.contracts:
-                    if(contract.paid == False and contract.company in message.embeds[0].title and ((contract.positive == True and "Contrat" in message.embeds[0].title) or (contract.positive == False and "Contrat" not in message.embeds[0].title))):
-                        contract.paid = True
-                        bot.update_db()
+                guilds = self.cur.execute("SELECT id, guildId FROM guilds")
+                for rowGuilds in guilds.fetchall():
+                    if(rowGuilds[1] == payload.guild_id):
+                        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE guildId = ? AND (channelsType.usage = 'Contrat' OR channelsType.usage = 'ContratPatron')", (rowGuilds[0],))
+                        for channelSQL in channels.fetchall():
+                            if(channelSQL[0] == payload.channel_id):
+                        contracts = self.cur.execute("SELECT company, positive, paid FROM contracts WHERE guildId = ?", (rowGuilds[0],))
+                        for rowContract in contracts.fetchall():
+                            if(rowContract[2] == False and rowContract[0] in message.embeds[0].title):
+                                usages = self.cur.execute("SELECT USAGE FROM channelsType LEFT JOIN channels ON channelsType.id = channels.type WHERE channels.channelId = ?", (payload.channel_id,))
+                                positive = True
+                                if(usages.fetchone()[0] == "ContratPatron"):
+                                    positive = False
 
-                        await message.delete()
-                        if(contract.positive == True):
-                            await self.channelLogContrat.send("🟢 Le **" + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
-                        else:
-                            await self.channelLogContrat.send("🔴 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été payé par " +  user.display_name)
-                        await self.update_head()
+                                self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ? AND company = ? AND positive = ?", (True, rowGuilds[0], message.embeds[0].title, positive, ))
+                                bot.con.commit()
+                                await message.delete()
+
+                                channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'LogContrat' AND guildId = ?", (rowGuilds[0],))
+                                if(positive == True):
+                                    await self.client.get_channel(channels.fetchone()[0]).send("🟢 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
+                                else:
+                                    await self.client.get_channel(channels.fetchone()[0]).send("🔴 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été payé par " +  user.display_name)
+                                await self.update_head(payload.guild_id)
                         
         except discord.errors.NotFound:
             pass
     
-    def update_db(self):
-        data = {}
-        for contract in self.contracts:
-            data[contract.company] = {}
-            data[contract.company]["amount"] = contract.amount
-            data[contract.company]["positive"] = contract.positive
-            data[contract.company]["paid"] = contract.paid
-            data[contract.company]["deduc"] = contract.deduc
-            data[contract.company]["reset"] = contract.reset
-            data[contract.company]["temp"] = contract.temp
-        with open(DB_CONTRACT, 'w') as outfile:
-            json.dump(data, outfile)
-    
     def run(self):
         print("Starting bot ...")
         self.client.run(self.token)
-
-class Contrat(object):
-    def __init__(self, company, amount):
-        self.company = company
-        self.amount = amount
-        self.positive = False
-        self.paid = False
-        self.deduc = True
-        self.reset = False
-        self.temp = False
 
 bot = Bot()
 
@@ -369,11 +351,7 @@ bot = Bot()
     name="ajouterContrat",
     description="Ajoute un contrat",
     default_permission = False,
-    permissions={
-        bot.guild_ids[0]: [
-            create_permission(bot.userIdStaff, SlashCommandPermissionType.ROLE, True),
-            create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
-    },
+    permissions=bot.permissions,
     options = [{
         "name": "entreprise",
         "description": "Entreprise pour lequel ajouter le Contrat",
@@ -416,42 +394,35 @@ bot = Bot()
 async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, typec: bool):
     await ctx.defer(hidden=True)   
     
-    contrat = Contrat(entreprise, montant)
+    positive = 0
+    deduc = 1
+    reset = 0
+    temp = 0
 
+    if(typec == 1):
+        positive = 1
     if(typec == 2):
-        contrat.deduc = False
-        typec = 0
+        deduc = 0
     elif(typec == 3):
-        contrat.deduc = False
-        contrat.reset = True
-        typec = 0
+        deduc = 0
+        reset = 1
     elif(typec == 4):
-        contrat.reset = True
-        typec = 0
+        reset = 1
     elif(typec == 5):
-        contrat.temp = True
-        typec = 0
+        temp = 1
     elif(typec == 6):
-        contrat.deduc = False
-        contrat.temp = True
-        typec = 0    
-        
-    contrat.positive = typec
-    contrat.paid = False
-    bot.contracts.append(contrat)
-    bot.update_db()
-    await bot.update_contract()
-    await ctx.send(content="Contrat " + contrat.company + " ajouté !",hidden=True)
+        deduc = 0
+        temp = 1
+
+    bot.cur.execute("INSERT INTO contracts (guildId, company, amount, paid, positive, deduc, reset, temp) SELECT id, ?, ?, ?, ?, ?, ?, ? FROM guilds WHERE guildId = ?", (entreprise, montant, False, positive, deduc, reset, temp, ctx.guild_id))
+    await bot.update_contract(ctx.guild_id)
+    await ctx.send(content="Contrat " + entreprise + " ajouté !",hidden=True)
 
 @slash.slash(
     name="modifierContrat",
     description="Modifie un contrat existant",
     default_permission = False,
-    permissions={
-        bot.guild_ids[0]: [
-            create_permission(bot.userIdStaff, SlashCommandPermissionType.ROLE, True),
-            create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
-    },
+    permissions=bot.permissions,
     options = [{
         "name": "entreprise",
         "description": "Entreprise pour lequel changer le Contrat",
@@ -465,29 +436,16 @@ async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, type
     }],
     guild_ids=bot.guild_ids)
 async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
-    await ctx.defer(hidden=True)   
-    
-    for contract in bot.contracts:
-        if(contract.company == entreprise):
-            if(contract.reset == True):
-                contract.amount = contract.amount + montant
-            else:
-                contract.amount = montant
-            bot.update_db()
-            await bot.update_contract()
-            await ctx.send(content="Contrat " + contract.company + " modifié !",hidden=True)
-            return
-    await ctx.send(content="🔴Echec : Aucun contrat modifié !",hidden=True)
+    await ctx.defer(hidden=True)    
+    bot.cur.execute("UPDATE contracts SET amount = (CASE WHEN reset = 1 THEN amount + ? ELSE ? END) WHERE guildId = (SELECT id FROM guilds WHERE guildId = ?) AND company = ?", (montant, montant, ctx.guild_id, entreprise))
+    await bot.update_contract(ctx.guild_id)
+    await ctx.send(content="Contrat " + entreprise + " modifié !",hidden=True)
 
 @slash.slash(
     name="supprimerContrat",
     description="Supprime un contrat existant",
     default_permission = False,
-    permissions={
-        bot.guild_ids[0]: [
-            create_permission(bot.userIdStaff, SlashCommandPermissionType.ROLE, True),
-            create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
-    },
+    permissions=bot.permissions,
     options = [{
         "name": "entreprise",
         "description": "Entreprise pour lequel supprimer le Contrat",
@@ -497,32 +455,21 @@ async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
     guild_ids=bot.guild_ids)
 async def _supprimerContrat(ctx: SlashContext, entreprise: str):
     await ctx.defer(hidden=True)   
-    
-    for contract in bot.contracts:
-        if(contract.company == entreprise):
-            bot.contracts.remove(contract)
-            bot.update_db()
-            await bot.update_contract()
-            await ctx.send(content="Contrat " + contract.company + " supprimé !",hidden=True)
-            return
-    await ctx.send(content="🔴Echec : Aucun contrat supprimé !",hidden=True)
+    bot.cur.execute("DELETE FROM contracts WHERE guildId = (SELECT id FROM guilds WHERE guildId = ?) AND company = ?", (ctx.guild_id, entreprise))
+    await bot.update_contract(ctx.guild_id)
+    await ctx.send(content="Contrat " + entreprise + " supprimé !",hidden=True)
         
 @slash.slash(
     name="rechargerContrat",
     description="Recharge les contrats",
     default_permission = False,
-    permissions={
-        bot.guild_ids[0]: [
-            create_permission(bot.userIdStaff, SlashCommandPermissionType.ROLE, True),
-            create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
-    },
+    permissions=bot.permissions,
     options = [],
     guild_ids=bot.guild_ids)
-async def _supprimerContrat(ctx: SlashContext):
+async def _rechargerContrat(ctx: SlashContext):
     await ctx.defer(hidden=True)   
-
-    await bot.update_contract()
+    await bot.update_contract(ctx.guild_id)
     await ctx.send(content="Contrat rechargés !",hidden=True)
 
-    
+
 bot.run()
