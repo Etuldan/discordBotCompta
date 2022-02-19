@@ -95,8 +95,6 @@ class Bot(discord.Client):
                                 elif(field.name == "Argent Dépensé (Salaires Total)"):
                                     amount_outcome = amount_outcome - int(field.value[3:-5])
 
-        guilds = self.cur.execute("SELECT id, guildId FROM guilds")
-        for rowGuilds in guilds.fetchall():
             contracts = self.cur.execute("SELECT amount, company, paid, positive, deduc FROM contracts WHERE guildId = ?", (rowGuilds[0],))
             for rowContract in contracts:
                 if(rowContract[0] != 0 and rowContract[3] == 0 and rowContract[2] == 1):
