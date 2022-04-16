@@ -1,1 +1,1 @@
-discordBotBennys
+discordBotCompta
