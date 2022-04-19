@@ -2,14 +2,19 @@
 # python3 -m pip install discord.py discord-py-interactions fpdf
 
 import discord
-from discord_slash import SlashCommand, SlashContext
-from discord_slash.utils.manage_commands import create_permission
-from discord_slash.model import SlashCommandPermissionType
+import discord_slash
 
-from sys import platform
+from discord_slash.utils.manage_components import create_button, create_actionrow, wait_for_component, ComponentContext
+from discord_slash.utils.manage_commands import create_permission
+from discord_slash.model import ButtonStyle, SlashCommandPermissionType
+from discord_slash import SlashContext, SlashCommand
+
+import sys
+import psutil
 import locale
-from fpdf import FPDF
+import fpdf
 import datetime
+import requests
 
 import asyncio
 
@@ -42,24 +47,47 @@ class Bot(discord.Client):
         self.cur = self.con.cursor()
 
         self.permissions = {}
+        self.permissionsAdmin = {}
         self.guild_ids = []
+        self.roleService = {}
+        self.channelLogService = {}
         guilds = self.cur.execute("SELECT guildId, id FROM guilds")
         for rowGuilds in guilds.fetchall():
             self.guild_ids.append((int(rowGuilds[0])))
+
+            # Permissions
             roles_ids = []
             roles = self.cur.execute("SELECT roleId FROM roles LEFT JOIN rolesType ON roles.type = rolesType.id WHERE rolesType.usage = 'Staff' AND guildId = ?" ,(rowGuilds[1],))
             for rowRoles in roles.fetchall():
                 roles_ids.append(create_permission(int(rowRoles[0]), SlashCommandPermissionType.ROLE, True))
             roles_ids.append(create_permission(650295737308938322, SlashCommandPermissionType.USER, True))
             self.permissions[int(rowGuilds[0])] = roles_ids
+            self.permissionsAdmin[int(rowGuilds[0])] = [create_permission(650295737308938322, SlashCommandPermissionType.USER, True)]
+            # Permissions
 
-            
+            # PDS
+            roles = self.cur.execute("SELECT roleId FROM roles LEFT JOIN rolesType ON roles.type = rolesType.id WHERE rolesType.usage = 'Service' AND guildId = ?" ,(rowGuilds[1],))
+            self.roleService[int(rowGuilds[0])] = roles.fetchone()
+            channel = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'Log Prise de Service' AND guildId = ?", (rowGuilds[1],))
+            self.channelLogService[int(rowGuilds[0])] = channel.fetchone()
+            # PDS
+
+            # Items
+            self.choice = []
+            items = self.cur.execute("SELECT name FROM item WHERE guildId = ?", (rowGuilds[1],))
+            for item in items.fetchall():
+                self.choice.append({"name": item[0], "value": item[0]})
+            # Items
+
         intents = discord.Intents.all()
         self.client = discord.Client(intents=intents)       
         slash = SlashCommand(self.client, sync_commands=True)
         
+
+
         self.on_ready = self.client.event(self.on_ready)
         self.on_raw_reaction_add = self.client.event(self.on_raw_reaction_add)
+        self.on_component = self.client.event(self.on_component)
               
         self.client.loop.create_task(self.background_task())
     
@@ -134,12 +162,12 @@ class Bot(discord.Client):
             await bot.update_contract(rowGuilds[1])
 
     async def writePDF(self, guildId, taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc):
-        if platform == "linux" or platform == "linux2":
+        if sys.platform == "linux" or sys.platform == "linux2":
             locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
-        elif platform == "win32":
+        elif sys.platform == "win32":
             locale.setlocale(locale.LC_ALL, 'fr_FR')
 
-        pdf = FPDF(orientation='P', unit='mm', format='A4')
+        pdf = fpdf.FPDF(orientation='P', unit='mm', format='A4')
         pdf.add_page()
         pdf.rect(5.0, 5.0, 200.0,287.0)
         #pdf.image("logo.png", link='', type='', x=70.0, y=6.0, h=1920/80)
@@ -221,7 +249,7 @@ class Bot(discord.Client):
             if(datetime.datetime.now().weekday() == 0 and now.hour == 7 and now.minute == 0):
                 await bot.retreive_contract_discord()
      
-    async def update_head(self, guildId):
+    async def update_head_contracts(self, guildId):
         embedEncaissement=discord.Embed(title="Encaissement", color=COLOR_GREEN)
 
         contracts = self.cur.execute("SELECT company, amount, positive, paid, deduc, temp, reset FROM contracts  LEFT JOIN guilds ON contracts.guildId = guilds.id WHERE guilds.guildId = ?", (guildId,))
@@ -277,9 +305,10 @@ class Bot(discord.Client):
         await self.client.get_channel(channelContrat).purge()
         await self.client.get_channel(channelContratPatron).purge()
 
-        await self.update_head(guildId)
+        await self.update_head_contracts(guildId)
 
         contracts = self.cur.execute("SELECT company, amount, paid, positive FROM contracts LEFT JOIN guilds ON contracts.guildId = guilds.id WHERE guilds.guildId = ?", (guildId,))
+        buttons = []
         for rowContract in contracts.fetchall():
             if(rowContract[1] != 0):
                 if(rowContract[2] == False):
@@ -292,14 +321,58 @@ class Bot(discord.Client):
                         msg = await self.client.get_channel(channelContratPatron).send(embed=embedVar)
                         await msg.add_reaction("✅")
     
+    async def update_PDS(self, guildId):
+        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id LEFT JOIN guilds on channels.guildId = guilds.id WHERE channelsType.usage = 'Prise de Service' AND guilds.guildId = ?", (guildId,))
+        channelPDS = channels.fetchone()
+        if channelPDS != None:
+            await self.client.get_channel(channelPDS[0]).purge()
+            buttons = [
+                create_button(style=ButtonStyle.green, label="Prise de Service", custom_id="PDS"),
+                create_button(style=ButtonStyle.blue, label="Fin de Service", custom_id="FDS"),
+            ]
+            action_row = create_actionrow(*buttons)
+            await self.client.get_channel(channelPDS[0]).send(components=[action_row])
+
+    async def on_component(self, ctx: ComponentContext):
+        await ctx.defer(hidden= True, ignore = True)
+        if(ctx.component["label"] == "Prise de Service"):
+            await ctx.author.add_roles(ctx.guild.get_role(self.roleService[ctx.guild_id][0]))
+            await self.client.get_channel(self.channelLogService[ctx.guild_id][0]).send(content=":green_circle: PDS de " + ctx.author.display_name)
+        elif(ctx.component["label"] == "Fin de Service"):
+            await ctx.author.remove_roles(ctx.guild.get_role(self.roleService[ctx.guild_id][0]))
+            await self.client.get_channel(self.channelLogService[ctx.guild_id][0]).send(content=":blue_circle: FDS de " + ctx.author.display_name)
+            
     async def on_ready(self):
         print(str(self.client.user) + " has connected to Discord")
         print("Bot ID is " + str(self.client.user.id))
 
+        # init slash commands options
+        optionsPBSC = [ 
+            {
+                "name": "objet",
+                "description": "Type d'objet à ajouter",
+                "type": 3,
+                "required": True,
+                "choices": self.choice
+            },{
+                "name": "montant",
+                "description": "Nombre d'objet à ajouter",
+                "type": 4,
+                "required": True
+            }]
+        slash.commands['stockadd'].options = optionsPBSC
+        optionsPBSC[0]["description"] = "Type d'objet à retirer"
+        optionsPBSC[1]["description"] = "Nombre d'objet à retirer"
+        slash.commands['stockremove'].options = optionsPBSC
+        await slash.sync_all_commands()
+        # init slash commands options
+
         guilds = self.cur.execute("SELECT id, guildId FROM guilds")
         for rowGuilds in guilds.fetchall():
             await self.update_contract(rowGuilds[1])
+            await self.update_PDS(rowGuilds[1])
         await self.client.wait_until_ready()
+
         print(str(self.client.user) + " is now ready!")
     
     async def on_raw_reaction_add(self, payload):
@@ -337,7 +410,7 @@ class Bot(discord.Client):
                                             await self.client.get_channel(channels.fetchone()[0]).send("🟢 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
                                         else:
                                             await self.client.get_channel(channels.fetchone()[0]).send("🔴 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été payé par " +  user.display_name)
-                        await self.update_head(payload.guild_id)
+                        await self.update_head_contracts(payload.guild_id)
                         
         except discord.errors.NotFound:
             pass
@@ -393,7 +466,7 @@ bot = Bot()
     }],
     guild_ids=bot.guild_ids)
 async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, typec: bool):
-    await ctx.defer(hidden=True)   
+    await ctx.defer(hidden=True)
     
     positive = 0
     deduc = 1
@@ -455,7 +528,7 @@ async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
     }],
     guild_ids=bot.guild_ids)
 async def _supprimerContrat(ctx: SlashContext, entreprise: str):
-    await ctx.defer(hidden=True)   
+    await ctx.defer(hidden=True)
     bot.cur.execute("DELETE FROM contracts WHERE guildId = (SELECT id FROM guilds WHERE guildId = ?) AND company = ?", (ctx.guild_id, entreprise))
     await bot.update_contract(ctx.guild_id)
     await ctx.send(content="Contrat " + entreprise + " supprimé !",hidden=True)
@@ -468,9 +541,77 @@ async def _supprimerContrat(ctx: SlashContext, entreprise: str):
     options = [],
     guild_ids=bot.guild_ids)
 async def _rechargerContrat(ctx: SlashContext):
-    await ctx.defer(hidden=True)   
+    await ctx.defer(hidden=True)
     await bot.update_contract(ctx.guild_id)
     await ctx.send(content="Contrat rechargés !",hidden=True)
 
+options = [
+        {
+        "name": "objet",
+        "description": "Type d'objet à ajouter",
+        "type": 3,
+        "required": True,
+        },{
+            "name": "montant",
+            "description": "Nombre d'objet à ajouter",
+            "type": 4,
+            "required": True
+        }]
+@slash.slash(
+    name="stockAdd",
+    description="Ajoute des objets au Stock",
+    default_permission = True,
+    options = [],
+    guild_ids=bot.guild_ids
+    )
+async def stockAdd(ctx: SlashContext, objet: str, montant: int):
+    await ctx.defer(hidden= True)
+    bot.cur.execute("UPDATE item SET quantity = MIN(maxQuantity, quantity + ?) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
+    bot.con.commit()
+    await ctx.send(content="Objet ajouté au stock !",hidden=True)
+
+@slash.slash(
+    name="stockRemove",
+    description="Supprime des objets du Stock",
+    default_permission = True,
+    options = [
+        {
+        "name": "objet",
+        "description": "Type d'objet à supprimer",
+        "type": 3,
+        "required": True,  
+        },{
+            "name": "montant",
+            "description": "Nombre d'objet à supprimer",
+            "type": 4,
+            "required": True
+        }],
+    guild_ids=bot.guild_ids
+    )
+async def stockRemove(ctx: SlashContext, objet: str, montant: int):
+    await ctx.defer(hidden= True)
+    bot.cur.execute("UPDATE item SET quantity = MAX(0, quantity - ?, 0) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
+    bot.con.commit()
+    await ctx.send(content="Objet supprimé du stock !",hidden=True)
+
+@slash.slash(
+    name="debug",
+    description="Affiche les infos de Debug",
+    default_permission = False,
+    permissions=bot.permissionsAdmin,
+    options = [],
+    guild_ids=bot.guild_ids)
+async def _debug(ctx: SlashContext):
+    await ctx.defer(hidden=True)
+    ip = requests.get('https://checkip.amazonaws.com').text.strip()
+    content = "System " + sys.version + "\n"
+    content += "Discord.py " + discord.__version__ + "\n"
+    content += "discord-slash " + discord_slash.__version__ + "\n"
+    content += "SQLite " + sqlite3.sqlite_version + "\n"
+    content += "FPDF " + fpdf.FPDF_VERSION + "\n"
+    content += "RAM " + str(psutil.virtual_memory().percent) + "%\n"
+    content += "CPU " + str(psutil.cpu_percent()) + "%\n"
+    content += "IP "  + ip + "\n"
+    await ctx.send(content=content,hidden=True)
 
 bot.run()
