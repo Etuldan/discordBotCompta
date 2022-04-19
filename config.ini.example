@@ -1,15 +1,5 @@
-[Channel]
-Contrat = 
-ContratPatron = 
-LogContrat  = 
-Home = 
-RapportFailyV = 
-Compta = 
-
 [Role]
 BotFailyV = 
-Staff = 
 
 [Discord]
 Token =  
-GuildID = 
