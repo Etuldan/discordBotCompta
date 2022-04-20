@@ -82,8 +82,6 @@ class Bot(discord.Client):
         intents = discord.Intents.all()
         self.client = discord.Client(intents=intents)       
         slash = SlashCommand(self.client, sync_commands=True)
-        
-
 
         self.on_ready = self.client.event(self.on_ready)
         self.on_raw_reaction_add = self.client.event(self.on_raw_reaction_add)
@@ -341,31 +339,20 @@ class Bot(discord.Client):
         elif(ctx.component["label"] == "Fin de Service"):
             await ctx.author.remove_roles(ctx.guild.get_role(self.roleService[ctx.guild_id][0]))
             await self.client.get_channel(self.channelLogService[ctx.guild_id][0]).send(content=":blue_circle: FDS de " + ctx.author.display_name)
-            
+
+    async def update_stock(self, updateList: bool):
+        if(updateList):
+            slash.commands['stockadd'].options[0]['choices'] = self.choice
+            slash.commands['stockremove'].options[0]['choices'] = self.choice
+            slash.commands['stockdel'].options[0]['choices'] = self.choice
+            slash.commands['stockquantity'].options[0]['choices'] = self.choice
+            await slash.sync_all_commands()
+
     async def on_ready(self):
         print(str(self.client.user) + " has connected to Discord")
         print("Bot ID is " + str(self.client.user.id))
 
-        # init slash commands options
-        optionsPBSC = [ 
-            {
-                "name": "objet",
-                "description": "Type d'objet à ajouter",
-                "type": 3,
-                "required": True,
-                "choices": self.choice
-            },{
-                "name": "montant",
-                "description": "Nombre d'objet à ajouter",
-                "type": 4,
-                "required": True
-            }]
-        slash.commands['stockadd'].options = optionsPBSC
-        optionsPBSC[0]["description"] = "Type d'objet à retirer"
-        optionsPBSC[1]["description"] = "Nombre d'objet à retirer"
-        slash.commands['stockremove'].options = optionsPBSC
-        await slash.sync_all_commands()
-        # init slash commands options
+        await self.update_stock(True)
 
         guilds = self.cur.execute("SELECT id, guildId FROM guilds")
         for rowGuilds in guilds.fetchall():
@@ -545,29 +532,26 @@ async def _rechargerContrat(ctx: SlashContext):
     await bot.update_contract(ctx.guild_id)
     await ctx.send(content="Contrat rechargés !",hidden=True)
 
-options = [
-        {
-        "name": "objet",
-        "description": "Type d'objet à ajouter",
-        "type": 3,
-        "required": True,
-        },{
-            "name": "montant",
-            "description": "Nombre d'objet à ajouter",
-            "type": 4,
-            "required": True
-        }]
 @slash.slash(
     name="stockAdd",
     description="Ajoute des objets au Stock",
     default_permission = True,
-    options = [],
+    options = [
+        {
+            "name": "objet",
+            "description": "Type d'objet à ajouter",
+            "type": 3,
+            "required": True,
+            "choices": [] 
+        }
+    ],
     guild_ids=bot.guild_ids
     )
 async def stockAdd(ctx: SlashContext, objet: str, montant: int):
     await ctx.defer(hidden= True)
     bot.cur.execute("UPDATE item SET quantity = MIN(maxQuantity, quantity + ?) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
     bot.con.commit()
+    await bot.update_stock(False)
     await ctx.send(content="Objet ajouté au stock !",hidden=True)
 
 @slash.slash(
@@ -576,10 +560,11 @@ async def stockAdd(ctx: SlashContext, objet: str, montant: int):
     default_permission = True,
     options = [
         {
-        "name": "objet",
-        "description": "Type d'objet à supprimer",
-        "type": 3,
-        "required": True,  
+            "name": "objet",
+            "description": "Type d'objet à supprimer",
+            "type": 3,
+            "required": True,
+            "choices": [] 
         },{
             "name": "montant",
             "description": "Nombre d'objet à supprimer",
@@ -592,7 +577,83 @@ async def stockRemove(ctx: SlashContext, objet: str, montant: int):
     await ctx.defer(hidden= True)
     bot.cur.execute("UPDATE item SET quantity = MAX(0, quantity - ?, 0) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
     bot.con.commit()
+    await bot.update_stock(False)
     await ctx.send(content="Objet supprimé du stock !",hidden=True)
+
+@slash.slash(
+    name="stockAddNew",
+    description="Ajoute des nouveaux objets au Stock",
+    default_permission = False,
+    permissions=bot.permissions,
+    options = [
+        {
+            "name": "objet",
+            "description": "Nom de l'objet à ajouter",
+            "type": 3,
+            "required": True,  
+        },{
+            "name": "quantite",
+            "description": "Quantité maximum de l'objet",
+            "type": 4,
+            "required": True
+        }],
+    guild_ids=bot.guild_ids
+    )
+async def stockAddNew(ctx: SlashContext, objet: str, quantite: int):
+    await ctx.defer(hidden= True)
+    bot.cur.execute("INSERT INTO item ('guildId', 'name', 'maxQuantity') VALUES ((SELECT id FROM guilds WHERE guildId = ?), ?, ?)", (ctx.guild_id, objet, quantite, ))
+    bot.con.commit()
+    await bot.update_stock(True)
+    await ctx.send(content="Nouvel objet ajouté au stock !",hidden=True)
+
+@slash.slash(
+    name="stockDel",
+    description="Supprime un type d'objet du Stock",
+    default_permission = False,
+    permissions=bot.permissions,
+    options = [
+        {
+            "name": "objet",
+            "description": "Nom de l'objet à supprimer",
+            "type": 3,
+            "required": True,
+            "choices": []
+        }],
+    guild_ids=bot.guild_ids
+    )
+async def stockDel(ctx: SlashContext, objet: str):
+    await ctx.defer(hidden= True)
+    bot.cur.execute("DELETE FROM item WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (objet, ctx.guild_id, ))
+    bot.con.commit()
+    await bot.update_stock(True)
+    await ctx.send(content="Type d'Objet supprimé du stock !",hidden=True)
+
+@slash.slash(
+    name="stockQuantity",
+    description="Modifie la quantité maximum d'un objet",
+    default_permission = False,
+    permissions=bot.permissions,
+    options = [
+        {
+            "name": "objet",
+            "description": "Nom de l'objet à modifier",
+            "type": 3,
+            "required": True,
+            "choices": []
+        },{
+            "name": "quantite",
+            "description": "Nouvelle quantité maximum de l'objet",
+            "type": 4,
+            "required": True
+        }],
+    guild_ids=bot.guild_ids
+    )
+async def stockQuantity(ctx: SlashContext, objet: str, quantite: int):
+    await ctx.defer(hidden= True)
+    bot.cur.execute("UPDATE item SET maxQuantity = ? WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (quantite, objet, ctx.guild_id, ))
+    bot.con.commit()
+    await bot.update_stock(False)
+    await ctx.send(content="Quantité maximum de l'objet modifiée !",hidden=True)
 
 @slash.slash(
     name="debug",
