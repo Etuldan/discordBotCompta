@@ -51,6 +51,7 @@ class Bot(discord.Client):
         self.guild_ids = []
         self.roleService = {}
         self.channelLogService = {}
+        self.messageStock = {}
         guilds = self.cur.execute("SELECT guildId, id FROM guilds")
         for rowGuilds in guilds.fetchall():
             self.guild_ids.append((int(rowGuilds[0])))
@@ -74,7 +75,7 @@ class Bot(discord.Client):
 
             # Items
             self.choice = []
-            items = self.cur.execute("SELECT name FROM item WHERE guildId = ?", (rowGuilds[1],))
+            items = self.cur.execute("SELECT name FROM items WHERE guildId = ?", (rowGuilds[1],))
             for item in items.fetchall():
                 self.choice.append({"name": item[0], "value": item[0]})
             # Items
@@ -89,7 +90,7 @@ class Bot(discord.Client):
               
         self.client.loop.create_task(self.background_task())
     
-    async def retreive_contract_discord(self):
+    async def update_taxes(self):
         guilds = self.cur.execute("SELECT id, guildId FROM guilds")
         for rowGuilds in guilds.fetchall():
             channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'RapportFailyV' AND guildId = ?", (rowGuilds[0],))
@@ -245,7 +246,7 @@ class Bot(discord.Client):
             await asyncio.sleep(50)
             now = datetime.datetime.now().time()
             if(datetime.datetime.now().weekday() == 0 and now.hour == 7 and now.minute == 0):
-                await bot.retreive_contract_discord()
+                await bot.update_taxes()
      
     async def update_head_contracts(self, guildId):
         embedEncaissement=discord.Embed(title="Encaissement", color=COLOR_GREEN)
@@ -331,6 +332,63 @@ class Bot(discord.Client):
             action_row = create_actionrow(*buttons)
             await self.client.get_channel(channelPDS[0]).send(components=[action_row])
 
+    async def update_stock(self, updateList: bool, guildId: int):
+        if(guildId == 0):
+            guilds = self.cur.execute("SELECT guildId FROM guilds")
+            for rowGuilds in guilds.fetchall():
+                await self.update_stock(True, rowGuilds[0])
+            return
+
+        if(updateList):
+            self.choice = []
+            items = self.cur.execute("SELECT name FROM items WHERE guildId = (SELECT id FROM guilds WHERE guildId = ?)", (guildId,))
+            for item in items.fetchall():
+                self.choice.append({"name": item[0], "value": item[0]})
+
+            slash.commands['stockadd'].options[0]['choices'] = self.choice
+            slash.commands['stockremove'].options[0]['choices'] = self.choice
+            slash.commands['stockdel'].options[0]['choices'] = self.choice
+            slash.commands['stockquantity'].options[0]['choices'] = self.choice
+            slash.commands['stockseuil'].options[0]['choices'] = self.choice
+            await slash.sync_all_commands()
+
+        channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id LEFT JOIN guilds on channels.guildId = guilds.id WHERE channelsType.usage = 'Stock' AND guilds.guildId = ?", (guildId,))
+        channelStock = channels.fetchone()
+        if channelStock != None:
+            embedStock=discord.Embed(title="Etat des Stocks", color=COLOR_GREEN)
+            items = self.cur.execute("SELECT items.name, quantity, maxQuantity, threshold FROM items LEFT JOIN guilds ON items.guildId = guilds.id WHERE guilds.guildId = ?", (guildId,))
+            itemNames = ""
+            itemsquantity = ""
+            for rowItems in items.fetchall():
+                if(rowItems[1] >= rowItems[3]):
+                    itemNames = itemNames + ":green_circl: " + rowItems[0] + "\n"
+                else:
+                    itemNames = itemNames + ":ered_circle: " + rowItems[0] + "\n"
+                itemsquantity = itemsquantity + str(rowItems[1]) + "/" + str(rowItems[2]) + "\n"
+
+            embedStock.add_field(name="Nom", value=itemNames, inline=True)
+            embedStock.add_field(name="Quantité", value=itemsquantity, inline=True)
+
+            if self.messageStock == {}:
+                await self.client.get_channel(channelStock[0]).purge()
+                self.messageStock[guildId] = await self.client.get_channel(channelStock[0]).send(embed=embedStock)
+            else:
+                await self.messageStock[guildId].edit(embed=embedStock)
+
+    async def on_ready(self):
+        print(str(self.client.user) + " has connected to Discord")
+        print("Bot ID is " + str(self.client.user.id))
+
+        await self.update_stock(True, 0)
+
+        guilds = self.cur.execute("SELECT id, guildId FROM guilds")
+        for rowGuilds in guilds.fetchall():
+            await self.update_contract(rowGuilds[1])
+            await self.update_PDS(rowGuilds[1])
+        await self.client.wait_until_ready()
+
+        print(str(self.client.user) + " is now ready!")
+
     async def on_component(self, ctx: ComponentContext):
         await ctx.defer(hidden= True, ignore = True)
         if(ctx.component["label"] == "Prise de Service"):
@@ -340,28 +398,6 @@ class Bot(discord.Client):
             await ctx.author.remove_roles(ctx.guild.get_role(self.roleService[ctx.guild_id][0]))
             await self.client.get_channel(self.channelLogService[ctx.guild_id][0]).send(content=":blue_circle: FDS de " + ctx.author.display_name)
 
-    async def update_stock(self, updateList: bool):
-        if(updateList):
-            slash.commands['stockadd'].options[0]['choices'] = self.choice
-            slash.commands['stockremove'].options[0]['choices'] = self.choice
-            slash.commands['stockdel'].options[0]['choices'] = self.choice
-            slash.commands['stockquantity'].options[0]['choices'] = self.choice
-            await slash.sync_all_commands()
-
-    async def on_ready(self):
-        print(str(self.client.user) + " has connected to Discord")
-        print("Bot ID is " + str(self.client.user.id))
-
-        await self.update_stock(True)
-
-        guilds = self.cur.execute("SELECT id, guildId FROM guilds")
-        for rowGuilds in guilds.fetchall():
-            await self.update_contract(rowGuilds[1])
-            await self.update_PDS(rowGuilds[1])
-        await self.client.wait_until_ready()
-
-        print(str(self.client.user) + " is now ready!")
-    
     async def on_raw_reaction_add(self, payload):
         try:
             if(payload.emoji.name == "✅"):
@@ -543,15 +579,20 @@ async def _rechargerContrat(ctx: SlashContext):
             "type": 3,
             "required": True,
             "choices": [] 
+        },{
+            "name": "montant",
+            "description": "Nombre d'objet à ajouter",
+            "type": 4,
+            "required": True
         }
     ],
     guild_ids=bot.guild_ids
     )
 async def stockAdd(ctx: SlashContext, objet: str, montant: int):
     await ctx.defer(hidden= True)
-    bot.cur.execute("UPDATE item SET quantity = MIN(maxQuantity, quantity + ?) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
+    bot.cur.execute("UPDATE items SET quantity = MIN(maxQuantity, quantity + ?) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
     bot.con.commit()
-    await bot.update_stock(False)
+    await bot.update_stock(False, ctx.guild_id)
     await ctx.send(content="Objet ajouté au stock !",hidden=True)
 
 @slash.slash(
@@ -575,9 +616,9 @@ async def stockAdd(ctx: SlashContext, objet: str, montant: int):
     )
 async def stockRemove(ctx: SlashContext, objet: str, montant: int):
     await ctx.defer(hidden= True)
-    bot.cur.execute("UPDATE item SET quantity = MAX(0, quantity - ?, 0) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
+    bot.cur.execute("UPDATE items SET quantity = MAX(0, quantity - ?, 0) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
     bot.con.commit()
-    await bot.update_stock(False)
+    await bot.update_stock(False, ctx.guild_id)
     await ctx.send(content="Objet supprimé du stock !",hidden=True)
 
 @slash.slash(
@@ -596,14 +637,19 @@ async def stockRemove(ctx: SlashContext, objet: str, montant: int):
             "description": "Quantité maximum de l'objet",
             "type": 4,
             "required": True
+        },{
+            "name": "seuil",
+            "description": "Seuil de stock",
+            "type": 4,
+            "required": True
         }],
     guild_ids=bot.guild_ids
     )
-async def stockAddNew(ctx: SlashContext, objet: str, quantite: int):
+async def stockAddNew(ctx: SlashContext, objet: str, quantite: int, seuil: int):
     await ctx.defer(hidden= True)
-    bot.cur.execute("INSERT INTO item ('guildId', 'name', 'maxQuantity') VALUES ((SELECT id FROM guilds WHERE guildId = ?), ?, ?)", (ctx.guild_id, objet, quantite, ))
+    bot.cur.execute("INSERT INTO items ('guildId', 'name', 'maxQuantity', 'threshold') VALUES ((SELECT id FROM guilds WHERE guildId = ?), ?, ?, ?)", (ctx.guild_id, objet, quantite, seuil, ))
     bot.con.commit()
-    await bot.update_stock(True)
+    await bot.update_stock(True, ctx.guild_id)
     await ctx.send(content="Nouvel objet ajouté au stock !",hidden=True)
 
 @slash.slash(
@@ -623,9 +669,9 @@ async def stockAddNew(ctx: SlashContext, objet: str, quantite: int):
     )
 async def stockDel(ctx: SlashContext, objet: str):
     await ctx.defer(hidden= True)
-    bot.cur.execute("DELETE FROM item WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (objet, ctx.guild_id, ))
+    bot.cur.execute("DELETE FROM items WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (objet, ctx.guild_id, ))
     bot.con.commit()
-    await bot.update_stock(True)
+    await bot.update_stock(True, ctx.guild_id)
     await ctx.send(content="Type d'Objet supprimé du stock !",hidden=True)
 
 @slash.slash(
@@ -650,19 +696,57 @@ async def stockDel(ctx: SlashContext, objet: str):
     )
 async def stockQuantity(ctx: SlashContext, objet: str, quantite: int):
     await ctx.defer(hidden= True)
-    bot.cur.execute("UPDATE item SET maxQuantity = ? WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (quantite, objet, ctx.guild_id, ))
+    bot.cur.execute("UPDATE items SET maxQuantity = ? WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (quantite, objet, ctx.guild_id, ))
     bot.con.commit()
-    await bot.update_stock(False)
+    await bot.update_stock(False, ctx.guild_id)
     await ctx.send(content="Quantité maximum de l'objet modifiée !",hidden=True)
 
 @slash.slash(
-    name="debug",
+    name="stockSeuil",
+    description="Modifie le seuil d'un objet",
+    default_permission = False,
+    permissions=bot.permissions,
+    options = [
+        {
+            "name": "objet",
+            "description": "Nom de l'objet à modifier",
+            "type": 3,
+            "required": True,
+            "choices": []
+        },{
+            "name": "seuil",
+            "description": "Nouveau seuil de l'objet",
+            "type": 4,
+            "required": True
+        }],
+    guild_ids=bot.guild_ids
+)
+async def stockSeuil(ctx: SlashContext, objet: str, seuil: int):
+    await ctx.defer(hidden= True)
+    bot.cur.execute("UPDATE items SET threshold = ? WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (seuil, objet, ctx.guild_id, ))
+    bot.con.commit()
+    await bot.update_stock(False, ctx.guild_id)
+    await ctx.send(content="Seuil de l'objet modifié !",hidden=True)
+
+@slash.slash(
+    name="adminForceCompute",
+    description="Force le calcul des impots",
+    default_permission = False,
+    permissions=bot.permissionsAdmin,
+    guild_ids=bot.guild_ids
+)
+async def adminForceCompute(ctx: SlashContext):
+    await ctx.defer(hidden= True)
+    await bot.update_taxes(ctx.guild_id)
+    await ctx.send(content="Impôts calculés !",hidden=True)
+
+@slash.slash(
+    name="adminDebug",
     description="Affiche les infos de Debug",
     default_permission = False,
     permissions=bot.permissionsAdmin,
-    options = [],
     guild_ids=bot.guild_ids)
-async def _debug(ctx: SlashContext):
+async def _adminDebug(ctx: SlashContext):
     await ctx.defer(hidden=True)
     ip = requests.get('https://checkip.amazonaws.com').text.strip()
     content = "System " + sys.version + "\n"
