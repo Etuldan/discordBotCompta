@@ -361,9 +361,9 @@ class Bot(discord.Client):
             itemsquantity = ""
             for rowItems in items.fetchall():
                 if(rowItems[1] >= rowItems[3]):
-                    itemNames = itemNames + ":green_circl: " + rowItems[0] + "\n"
+                    itemNames = itemNames + ":green_circle: " + rowItems[0] + "\n"
                 else:
-                    itemNames = itemNames + ":ered_circle: " + rowItems[0] + "\n"
+                    itemNames = itemNames + ":red_circle: " + rowItems[0] + "\n"
                 itemsquantity = itemsquantity + str(rowItems[1]) + "/" + str(rowItems[2]) + "\n"
 
             embedStock.add_field(name="Nom", value=itemNames, inline=True)
