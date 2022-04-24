@@ -51,6 +51,7 @@ class Bot(discord.Client):
         self.guild_ids = []
         self.roleService = {}
         self.channelLogService = {}
+        self.channelVente ={}
         self.messageStock = {}
         guilds = self.cur.execute("SELECT guildId, id FROM guilds")
         for rowGuilds in guilds.fetchall():
@@ -72,6 +73,11 @@ class Bot(discord.Client):
             channel = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'Log Prise de Service' AND guildId = ?", (rowGuilds[1],))
             self.channelLogService[int(rowGuilds[0])] = channel.fetchone()
             # PDS
+
+            # Vente
+            channel = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'Vente' AND guildId = ?", (rowGuilds[1],))
+            self.channelVente[int(rowGuilds[0])] = channel.fetchone()
+            # Vente
 
             # Items
             self.choice = []
@@ -182,7 +188,7 @@ class Bot(discord.Client):
         pdf.set_xy(100.0, 40.0)
         pdf.set_font('Arial', 'B', 14)
         pdf.set_text_color(50, 50, 50)
-        pdf.cell(w=10.0, h=10.0, align='C', txt="Du " + monday.strftime("%d %B %Y") + " au " + sunday.strftime("%d %B %Y"), border=0)
+        pdf.cell(w=10.0, h=10.0, align='C', txt="Du {} au {}".format(monday.strftime("%d %B %Y"), sunday.strftime("%d %B %Y")), border=0)
 
         pdf.set_xy(100.0,55.0)
         pdf.set_font('Arial', '', 15)
@@ -361,10 +367,10 @@ class Bot(discord.Client):
             itemsquantity = ""
             for rowItems in items.fetchall():
                 if(rowItems[1] >= rowItems[3]):
-                    itemNames = itemNames + ":green_circle: " + rowItems[0] + "\n"
+                    itemNames = "{}:green_circle: {} \n".format(itemNames, rowItems[0])
                 else:
-                    itemNames = itemNames + ":red_circle: " + rowItems[0] + "\n"
-                itemsquantity = itemsquantity + str(rowItems[1]) + "/" + str(rowItems[2]) + "\n"
+                    itemNames = "{}:green_circle: {} \n".format(itemNames, rowItems[0])
+                itemsquantity = "{}{}/{}\n".format(itemsquantity, rowItems[1], rowItems[2])
 
             embedStock.add_field(name="Nom", value=itemNames, inline=True)
             embedStock.add_field(name="Quantité", value=itemsquantity, inline=True)
@@ -375,9 +381,12 @@ class Bot(discord.Client):
             else:
                 await self.messageStock[guildId].edit(embed=embedStock)
 
+    async def add_items(self, guildId: int, user, quantity: int):
+        pass
+    
     async def on_ready(self):
         print(str(self.client.user) + " has connected to Discord")
-        print("Bot ID is " + str(self.client.user.id))
+        print("Bot ID is {}".format(self.client.user.id))
 
         await self.update_stock(True, 0)
 
@@ -393,10 +402,10 @@ class Bot(discord.Client):
         await ctx.defer(hidden= True, ignore = True)
         if(ctx.component["label"] == "Prise de Service"):
             await ctx.author.add_roles(ctx.guild.get_role(self.roleService[ctx.guild_id][0]))
-            await self.client.get_channel(self.channelLogService[ctx.guild_id][0]).send(content=":green_circle: PDS de " + ctx.author.display_name)
+            await self.client.get_channel(self.channelLogService[ctx.guild_id][0]).send(content=":green_circle: PDS de {}".format(ctx.author.display_name))
         elif(ctx.component["label"] == "Fin de Service"):
             await ctx.author.remove_roles(ctx.guild.get_role(self.roleService[ctx.guild_id][0]))
-            await self.client.get_channel(self.channelLogService[ctx.guild_id][0]).send(content=":blue_circle: FDS de " + ctx.author.display_name)
+            await self.client.get_channel(self.channelLogService[ctx.guild_id][0]).send(content=":blue_circle: FDS de {}".format(ctx.author.display_name))
 
     async def on_raw_reaction_add(self, payload):
         try:
@@ -430,9 +439,9 @@ class Bot(discord.Client):
 
                                         channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'LogContrat' AND guildId = ?", (rowGuilds[0],))
                                         if(positive == True):
-                                            await self.client.get_channel(channels.fetchone()[0]).send("🟢 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été encaissé par " +  user.display_name)
+                                            await self.client.get_channel(channels.fetchone()[0]).send("🟢 Le **Contrat {}** de {} a été encaissé par {}".format(message.embeds[0].title, message.embeds[0].description, user.display_name))
                                         else:
-                                            await self.client.get_channel(channels.fetchone()[0]).send("🔴 Le **Contrat " + message.embeds[0].title + "** de " + message.embeds[0].description + " a été payé par " +  user.display_name)
+                                            await self.client.get_channel(channels.fetchone()[0]).send("🔴 Le **Contrat {}** de {} a été payé par {}".format(message.embeds[0].title, message.embeds[0].description, user.display_name))
                         await self.update_head_contracts(payload.guild_id)
                         
         except discord.errors.NotFound:
@@ -513,7 +522,7 @@ async def _ajouterContrat(ctx: SlashContext, entreprise: str, montant: int, type
 
     bot.cur.execute("INSERT INTO contracts (guildId, company, amount, paid, positive, deduc, reset, temp) SELECT id, ?, ?, ?, ?, ?, ?, ? FROM guilds WHERE guildId = ?", (entreprise, montant, False, positive, deduc, reset, temp, ctx.guild_id))
     await bot.update_contract(ctx.guild_id)
-    await ctx.send(content="Contrat " + entreprise + " ajouté !",hidden=True)
+    await ctx.send(content="Contrat {} ajouté !".format(entreprise),hidden=True)
 
 @slash.slash(
     name="modifierContrat",
@@ -536,7 +545,7 @@ async def _modifierContrat(ctx: SlashContext, entreprise: str, montant: int):
     await ctx.defer(hidden=True)    
     bot.cur.execute("UPDATE contracts SET amount = (CASE WHEN reset = 1 THEN amount + ? ELSE ? END) WHERE guildId = (SELECT id FROM guilds WHERE guildId = ?) AND company = ?", (montant, montant, ctx.guild_id, entreprise))
     await bot.update_contract(ctx.guild_id)
-    await ctx.send(content="Contrat " + entreprise + " modifié !",hidden=True)
+    await ctx.send(content="Contrat {} modifié !".format(entreprise),hidden=True)
 
 @slash.slash(
     name="supprimerContrat",
@@ -554,7 +563,7 @@ async def _supprimerContrat(ctx: SlashContext, entreprise: str):
     await ctx.defer(hidden=True)
     bot.cur.execute("DELETE FROM contracts WHERE guildId = (SELECT id FROM guilds WHERE guildId = ?) AND company = ?", (ctx.guild_id, entreprise))
     await bot.update_contract(ctx.guild_id)
-    await ctx.send(content="Contrat " + entreprise + " supprimé !",hidden=True)
+    await ctx.send(content="Contrat {} supprimé !".format(entreprise),hidden=True)
         
 @slash.slash(
     name="rechargerContrat",
@@ -590,6 +599,13 @@ async def _rechargerContrat(ctx: SlashContext):
     )
 async def stockAdd(ctx: SlashContext, objet: str, montant: int):
     await ctx.defer(hidden= True)
+    itemsData = bot.cur.execute("SELECT quantity, threshold FROM items WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (objet, ctx.guild_id, ))
+    itemData = itemsData.fetchone()
+    if itemData != None:
+        toAdd = max(min(itemData[1] - itemData[0], montant),0)
+        if(toAdd > 0):
+            await bot.add_items(ctx.guild_id, ctx.author, toAdd)            
+
     bot.cur.execute("UPDATE items SET quantity = MIN(maxQuantity, quantity + ?) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
     bot.con.commit()
     await bot.update_stock(False, ctx.guild_id)
@@ -633,7 +649,7 @@ async def stockRemove(ctx: SlashContext, objet: str, montant: int):
             "type": 3,
             "required": True,  
         },{
-            "name": "quantite",
+            "name": "quantitemax",
             "description": "Quantité maximum de l'objet",
             "type": 4,
             "required": True
@@ -642,12 +658,17 @@ async def stockRemove(ctx: SlashContext, objet: str, montant: int):
             "description": "Seuil de stock",
             "type": 4,
             "required": True
+        },{
+            "name": "craft",
+            "description": "Nombre d'objet requis pour fabriquer l'objet",
+            "type": 10,
+            "required": True
         }],
     guild_ids=bot.guild_ids
     )
-async def stockAddNew(ctx: SlashContext, objet: str, quantite: int, seuil: int):
+async def stockAddNew(ctx: SlashContext, objet: str, quantitemax: int, seuil: int, craft: float):
     await ctx.defer(hidden= True)
-    bot.cur.execute("INSERT INTO items ('guildId', 'name', 'maxQuantity', 'threshold') VALUES ((SELECT id FROM guilds WHERE guildId = ?), ?, ?, ?)", (ctx.guild_id, objet, quantite, seuil, ))
+    bot.cur.execute("INSERT INTO items ('guildId', 'name', 'maxQuantity', 'threshold', 'craft') VALUES ((SELECT id FROM guilds WHERE guildId = ?), ?, ?, ?, ?)", (ctx.guild_id, objet, quantitemax, seuil, craft, ))
     bot.con.commit()
     await bot.update_stock(True, ctx.guild_id)
     await ctx.send(content="Nouvel objet ajouté au stock !",hidden=True)
@@ -729,6 +750,34 @@ async def stockSeuil(ctx: SlashContext, objet: str, seuil: int):
     await ctx.send(content="Seuil de l'objet modifié !",hidden=True)
 
 @slash.slash(
+    name="vente",
+    description="Vends un objet",
+    default_permission = True,
+    options = [
+        {
+            "name": "prix",
+            "description": "Prix de vente",
+            "type": 4,
+            "required": True
+        },{
+            "name": "acheteur",
+            "description": "Acheteur",
+            "type": 3,
+            "required": True
+        },{
+            "name": "description",
+            "description": "Information sur les objets vendus",
+            "type": 3,
+            "required": True
+        }],
+    guild_ids=bot.guild_ids
+)
+async def vente(ctx: SlashContext, prix: int, acheteur: str, description: str):
+    await ctx.defer(hidden= True)
+    await bot.client.get_channel(bot.channelVente[ctx.guild_id][0]).send(content="Vente de {} à {} pour {}$".format(objdescriptionet, acheteur, prix))
+    await ctx.send(content="Vente effectuée",hidden=True)
+
+@slash.slash(
     name="adminForceCompute",
     description="Force le calcul des impots",
     default_permission = False,
@@ -749,14 +798,7 @@ async def adminForceCompute(ctx: SlashContext):
 async def _adminDebug(ctx: SlashContext):
     await ctx.defer(hidden=True)
     ip = requests.get('https://checkip.amazonaws.com').text.strip()
-    content = "System " + sys.version + "\n"
-    content += "Discord.py " + discord.__version__ + "\n"
-    content += "discord-slash " + discord_slash.__version__ + "\n"
-    content += "SQLite " + sqlite3.sqlite_version + "\n"
-    content += "FPDF " + fpdf.FPDF_VERSION + "\n"
-    content += "RAM " + str(psutil.virtual_memory().percent) + "%\n"
-    content += "CPU " + str(psutil.cpu_percent()) + "%\n"
-    content += "IP "  + ip + "\n"
+    content = "System {}\nDiscord.py {}\ndiscord-slash {}\nSQLite {}\nFPDF {}\nRAM {}%\nCPU {}%\nIP {}\n".format(sys.version, discord.__version__, discord_slash.__version__, sqlite3.sqlite_version, fpdf.FPDF_VERSIONpsutil.virtual_memory().percent, psutil.cpu_percent(), ip)
     await ctx.send(content=content,hidden=True)
 
 bot.run()
