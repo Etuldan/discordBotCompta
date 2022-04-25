@@ -106,10 +106,27 @@ class Bot(discord.Client):
               
         self.client.loop.create_task(self.background_task())
     
+    async def update_farm(self):
+        guilds = self.cur.execute("SELECT id, guildId FROM guilds")
+        for rowGuilds in guilds.fetchall():
+            today = datetime.date.today()
+            yesterday = today - datetime.timedelta(days = 1)
+            dt = datetime.datetime.combine(yesterday, datetime.time())
+            channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'RapportFailyV' AND guildId = ?", (rowGuilds[0],))
+            messages = await self.client.get_channel(channels.fetchone()[0]).history(limit=100, after=dt).flatten()
+
+            for msg in messages:
+                if(msg.author.id == self.userIdBotFailyV):
+                    embeds = msg.embeds
+                    for embed in embeds:
+                        if(embed.title == "Détails Tâches"):
+                            for field in embed.fields:
+                                employee = field.name
+                                farm = int(field.value.split("**")[1])
+
     async def update_taxes(self):
         guilds = self.cur.execute("SELECT id, guildId FROM guilds")
         for rowGuilds in guilds.fetchall():
-            channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'RapportFailyV' AND guildId = ?", (rowGuilds[0],))
             amount_income = 0
             amount_outcome = 0
             amount_depense_deduc = 0
@@ -121,6 +138,7 @@ class Bot(discord.Client):
             today = datetime.date.today()
             last_tuesday = today - datetime.timedelta(days=today.weekday()) + datetime.timedelta(days = 1)
             dt = datetime.datetime.combine(last_tuesday, datetime.time())
+            channels = self.cur.execute("SELECT channelId FROM channels LEFT JOIN channelsType ON channels.type = channelsType.id WHERE channelsType.usage = 'RapportFailyV' AND guildId = ?", (rowGuilds[0],))
             messages = await self.client.get_channel(channels.fetchone()[0]).history(limit=100, after=dt).flatten()
 
             for msg in messages:
@@ -136,7 +154,7 @@ class Bot(discord.Client):
                                 elif(field.name == "Argent Dépensé (Radar Automatique)"):
                                     amount_outcome = amount_outcome - int(field.value[3:-5])
                                 elif(field.name == "Argent Dépensé (Salaires Total)"):
-                                    amount_outcome = amount_outcome - int(field.value[3:-5])
+                                    amount_outcome = amount_outcome - int(field.value[3:-5])                               
 
             contracts = self.cur.execute("SELECT amount, company, paid, positive, deduc FROM contracts WHERE guildId = ?", (rowGuilds[0],))
             for rowContract in contracts:
@@ -159,7 +177,7 @@ class Bot(discord.Client):
             amount_impot = round((amount_income - amount_depense_deduc)*taux/100)
             amount_remaining = amount_income - amount_outcome - amount_depense_deduc - amount_depense_nondeduc - amount_impot
 
-            await self.writePDF(rowGuilds[0], taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc)
+            await self._writePDF(rowGuilds[0], taux, amount_income, amount_impot, amount_entreprise, amount_depense_deduc)
 
             contracts = self.cur.execute("SELECT company, reset, temp, id FROM contracts WHERE guildId = ?" , (rowGuilds[0],))
             for rowContract in contracts.fetchall():
@@ -176,7 +194,7 @@ class Bot(discord.Client):
             self.cur.execute("UPDATE contracts SET paid = ? WHERE guildId = ?", (0, rowGuilds[0],))
             await bot.update_contract(rowGuilds[1])
 
-    async def writePDF(self, guildId: int, taux: int, amount_income: int, amount_impot: int, amount_entreprise: int, amount_depense_deduc: int):
+    async def _writePDF(self, guildId: int, taux: int, amount_income: int, amount_impot: int, amount_entreprise: int, amount_depense_deduc: int):
         if sys.platform == "linux" or sys.platform == "linux2":
             locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
         elif sys.platform == "win32":
@@ -263,6 +281,8 @@ class Bot(discord.Client):
             now = datetime.datetime.now().time()
             if(datetime.datetime.now().weekday() == 0 and now.hour == 7 and now.minute == 0):
                 await bot.update_taxes()
+            if(now.hour == 7 and now.minute == 10):
+                await bot.update_farm()
      
     async def update_head_contracts(self, guildId: int):
         embedEncaissement=discord.Embed(title="Encaissement", color=COLOR_GREEN)
@@ -608,7 +628,7 @@ async def _rechargerContrat(ctx: SlashContext):
     ],
     guild_ids=bot.guild_ids
     )
-async def stockAjout(ctx: SlashContext, objet: str, montant: int):
+async def _stockAjout(ctx: SlashContext, objet: str, montant: int):
     await ctx.defer(hidden= True)
     itemsData = bot.cur.execute("SELECT quantity, threshold, craft FROM items WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (objet, ctx.guild_id, ))
     itemData = itemsData.fetchone()
@@ -642,7 +662,7 @@ async def stockAjout(ctx: SlashContext, objet: str, montant: int):
         }],
     guild_ids=bot.guild_ids
     )
-async def stockRetrait(ctx: SlashContext, objet: str, montant: int):
+async def _stockRetrait(ctx: SlashContext, objet: str, montant: int):
     await ctx.defer(hidden= True)
     bot.cur.execute("UPDATE items SET quantity = MAX(0, quantity - ?, 0) WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (montant, objet, ctx.guild_id, ))
     bot.con.commit()
@@ -678,7 +698,7 @@ async def stockRetrait(ctx: SlashContext, objet: str, montant: int):
         }],
     guild_ids=bot.guild_ids
     )
-async def stockGestionAdd(ctx: SlashContext, objet: str, quantitemax: int, seuil: int, craft: float):
+async def _stockGestionAdd(ctx: SlashContext, objet: str, quantitemax: int, seuil: int, craft: float):
     await ctx.defer(hidden= True)
     bot.cur.execute("INSERT INTO items ('guildId', 'name', 'maxQuantity', 'threshold', 'craft') VALUES ((SELECT id FROM guilds WHERE guildId = ?), ?, ?, ?, ?)", (ctx.guild_id, objet, quantitemax, seuil, craft, ))
     bot.con.commit()
@@ -700,7 +720,7 @@ async def stockGestionAdd(ctx: SlashContext, objet: str, quantitemax: int, seuil
         }],
     guild_ids=bot.guild_ids
     )
-async def stockGestionDel(ctx: SlashContext, objet: str):
+async def _stockGestionDel(ctx: SlashContext, objet: str):
     await ctx.defer(hidden= True)
     bot.cur.execute("DELETE FROM items WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (objet, ctx.guild_id, ))
     bot.con.commit()
@@ -727,7 +747,7 @@ async def stockGestionDel(ctx: SlashContext, objet: str):
         }],
     guild_ids=bot.guild_ids
     )
-async def stockGestionQuantity(ctx: SlashContext, objet: str, quantite: int):
+async def _stockGestionQuantity(ctx: SlashContext, objet: str, quantite: int):
     await ctx.defer(hidden= True)
     bot.cur.execute("UPDATE items SET maxQuantity = ? WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (quantite, objet, ctx.guild_id, ))
     bot.con.commit()
@@ -754,7 +774,7 @@ async def stockGestionQuantity(ctx: SlashContext, objet: str, quantite: int):
         }],
     guild_ids=bot.guild_ids
 )
-async def stockGestionSeuil(ctx: SlashContext, objet: str, seuil: int):
+async def _stockGestionSeuil(ctx: SlashContext, objet: str, seuil: int):
     await ctx.defer(hidden= True)
     bot.cur.execute("UPDATE items SET threshold = ? WHERE name = ? AND guildId = (SELECT id FROM guilds WHERE guildId = ?)", (seuil, objet, ctx.guild_id, ))
     bot.con.commit()
@@ -785,7 +805,7 @@ async def stockGestionSeuil(ctx: SlashContext, objet: str, seuil: int):
         }],
     guild_ids=bot.guild_ids
 )
-async def vente(ctx: SlashContext, prix: int, acheteur: str, description: str):
+async def _vente(ctx: SlashContext, prix: int, acheteur: str, description: str):
     await ctx.defer(hidden= True)
     await bot.client.get_channel(bot.channelVente[ctx.guild_id][0]).send(content="Vente de {} à {} pour {}$".format(description, acheteur, prix))
     await ctx.send(content="Vente effectuée",hidden=True)
@@ -797,7 +817,7 @@ async def vente(ctx: SlashContext, prix: int, acheteur: str, description: str):
     permissions=bot.permissionsAdmin,
     guild_ids=bot.guild_ids
 )
-async def adminForceCompute(ctx: SlashContext):
+async def _adminForceCompute(ctx: SlashContext):
     await ctx.defer(hidden= True)
     await bot.update_taxes(ctx.guild_id)
     await ctx.send(content="Impôts calculés !",hidden=True)
